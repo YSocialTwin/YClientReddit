@@ -658,89 +658,6 @@ class Agent(object):
         data = {"user_id": self.user_id, "interests": interests, "round": tid}
         post(f"{api_url}", headers=headers, data=json.dumps(data))
 
-    def news(self, tid, article, website):
-        """
-        Post a message to the service.
-
-        :param tid: the round id
-        :param article: the article
-        :param website: the website
-        """
-
-        u1 = AssistantAgent(
-            name=f"{self.name}",
-            llm_config=self.llm_config,
-            system_message=self.__effify(self.prompts["agent_roleplay_simple"]),
-            max_consecutive_auto_reply=1,
-        )
-
-        u2 = AssistantAgent(
-            name=f"Handler",
-            llm_config=self.llm_config,
-            system_message=self.__effify(self.prompts["handler_instructions"]),
-            max_consecutive_auto_reply=1,
-        )
-
-        u2.initiate_chat(
-            u1,
-            message=self.__effify(
-                self.prompts["handler_news"], website=website, article=article
-            ),
-            silent=True,
-            max_round=1,
-        )
-
-        emotion_eval = u2.chat_messages[u1][-1]["content"].lower()
-        emotion_eval = self.__clean_emotion(emotion_eval)
-
-        post_text = u2.chat_messages[u1][-2]["content"]
-
-        post_text = (
-            post_text.split(":")[-1]
-            .split("-")[-1]
-            .replace("@ ", "")
-            .replace("  ", " ")
-            .replace(". ", ".")
-            .replace(" ,", ",")
-            .replace("[", "")
-            .replace("]", "")
-            .replace("@,", "")
-        )
-        post_text = post_text.replace(f"@{self.name}", "")
-
-        hashtags = self.__extract_components(post_text, c_type="hashtags")
-        mentions = self.__extract_components(post_text, c_type="mentions")
-
-        st = json.dumps(
-            {
-                "user_id": self.user_id,
-                "tweet": post_text.replace('"', ""),
-                "emotions": emotion_eval,
-                "hashtags": hashtags,
-                "mentions": mentions,
-                "tid": tid,
-                "title": article.title,
-                "summary": article.summary,
-                "link": article.link,
-                "publisher": website.name,
-                "rss": website.rss,
-                "leaning": website.leaning,
-                "country": website.country,
-                "language": website.language,
-                "category": website.category,
-                "fetched_on": website.last_fetched,
-            }
-        )
-
-        u1.reset()
-        u2.reset()
-
-        headers = {"Content-Type": "application/x-www-form-urlencoded"}
-
-        api_url = f"{self.base_url}/news"
-        res = post(f"{api_url}", headers=headers, data=st)
-        return res
-
     def share_link(self, tid, article, website):
         """
         Share a link (article) with commentary.
@@ -1067,7 +984,7 @@ class Agent(object):
 
         u2 = AssistantAgent(
             name=f"Handler",
-            llm_config=self.llm_config,  # self.llm_config,
+            llm_config=self.llm_config,
             system_message=self.__effify(self.prompts["handler_instructions"]),
             max_consecutive_auto_reply=1,
         )
@@ -1140,7 +1057,7 @@ class Agent(object):
 
         u2 = AssistantAgent(
             name=f"Handler",
-            llm_config=self.llm_config,  # self.llm_config,
+            llm_config=self.llm_config,
             system_message=self.__effify(self.prompts["handler_instructions_simple"]),
             max_consecutive_auto_reply=0,
         )
