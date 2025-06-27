@@ -111,15 +111,13 @@ class YClientWeb(object):
         self.follow_recsys = None
         self.network = network
 
-        self.pages = []
-
     def read_agents(self):
         """
         Read the agents from the file
 
         :return:
         """
-        from y_client.classes import Agent, PageAgent
+        from y_client.classes import Agent
         import y_client.recsys as recsys
         import y_client.recsys as frecsys
 
@@ -128,10 +126,8 @@ class YClientWeb(object):
         data = json.load(open(self.agents_filename, "r"))
         for ag in data['agents']:
             if ag["is_page"] == 0:
-
                 content_recsys = getattr(recsys, ag["rec_sys"])()
                 follow_recsys = getattr(frecsys, ag["frec_sys"])(leaning_bias=1.5)
-
                 agent = Agent(
                     name=ag["name"],
                     email=ag["email"],
@@ -159,56 +155,8 @@ class YClientWeb(object):
                     web=True,
                     prompt=ag["prompts"],
                 )
-
                 agent.set_prompts(self.prompts)
-
                 self.agents.add_agent(agent)
-
-            else:
-                big_five = {
-                    "oe": "",
-                    "co": "",
-                    "ex": "",
-                    "ag": "",
-                    "ne": "",
-                }
-
-                content_recsys = getattr(recsys, "ReverseChronoPopularity")()
-                follow_recsys = getattr(frecsys, "Jaccard")(leaning_bias=1.5)
-
-                page = PageAgent(
-                    name=ag["name"],
-                    pwd="",
-                    email=ag["email"],
-                    age=0,
-                    ag_type=ag["type"],
-                    leaning=None,
-                    interests=[],
-                    config=self.config,
-                    big_five=big_five,
-                    language=None,
-                    education_level=None,
-                    owner=ag["owner"],
-                    round_actions=ag["round_actions"],
-                    gender=None,
-                    nationality=None,
-                    toxicity=None,
-                    api_key="",
-                    feed_url=ag["feed_url"],
-                    recsys=content_recsys,
-                    frecsys=follow_recsys,
-                    is_page=1,
-                    web=True
-                )
-
-                page.set_prompts(self.prompts)
-                self.agents.add_agent(page)
-                self.pages.append({
-                    "name": ag["name"],
-                    "feed": ag["feed_url"],
-                    "leaning": ag["leaning"],
-                    "category": ag["type"]
-                })
 
     def set_interests(self):
         """
@@ -246,7 +194,7 @@ class YClientWeb(object):
         :param a_file: the JSON file containing the agents
         """
         agents = json.load(open(a_file, "r"))
-        from y_client.classes import Agent, PageAgent
+        from y_client.classes import Agent
 
         for a in agents["agents"]:
             try:
@@ -257,16 +205,10 @@ class YClientWeb(object):
                     ag.set_prompts(self.prompts)
                     ag.set_rec_sys(self.content_recsys, self.follow_recsys)
                     self.agents.add_agent(ag)
-                else:
-                    ag = PageAgent(
-                        a["name"], email=a["email"], load=True, config=self.config, web=True
-                    )
-                    ag.set_prompts(self.prompts)
-                    ag.set_rec_sys(self.content_recsys, self.follow_recsys)
-                    self.agents.add_agent(ag)
-                    self.pages.append(ag)
             except Exception:
+                import traceback
                 print(f"Error loading agent: {a['name']}")
+                traceback.print_exc()
 
     def churn(self, tid):
         """
@@ -308,55 +250,104 @@ class YClientWeb(object):
                     return
                 agent.set_prompts(self.prompts)
                 agent.set_rec_sys(self.content_recsys, self.follow_recsys)
-            except Exception:
-                pass
+            except Exception as e:
+                import traceback
+                print(f"Error generating agent: {e}")
+                traceback.print_exc()
         if agent is not None:
             self.agents.add_agent(agent)
 
-    def add_feeds(self):
-        for page in self.pages:
-            self.feed.add_feed(
-                name=page["name"],
-                url_feed=page["feed"],
-                category=page["category"],
-                leaning=page["leaning"]
-            )
+    def load_feeds(self, filename):
+        """
+        Load RSS feeds from a file, add them to self.feed, and process them.
+        Adds optional fields: language (default 'en'), country (default '').
+        Logs statistics about feeds and articles.
+        :param filename: the file containing the RSS feeds (JSON)
+        :return: True if feeds were loaded successfully, False otherwise
+        """
+        import logging
+        import traceback
+        try:
+            logging.info(f"Loading RSS feed definitions from {filename}...")
+            with open(filename, 'r') as f:
+                data = json.load(f)
+            logging.info(f"Found {len(data)} feed definitions in file")
 
-    def add_network(self):
-        users_id_map = {}
+            for fdef in data:
+                self.feed.add_feed(
+                    name=fdef.get("name", ""),
+                    url_feed=fdef.get("feed_url", ""),
+                    category=fdef.get("category", ""),
+                    leaning=fdef.get("leaning", ""),
+                    language=fdef.get("language", "en"),
+                    country=fdef.get("country", "")
+                )
 
-        if self.first_run and self.network is not None:  # self.run
-            with open(f"{self.base_path}{self.network}", "r") as f:
-                headers = {"Content-Type": "application/x-www-form-urlencoded"}
+            # Process all feeds manually
+            total_stats = {
+                "total_feeds": len(self.feed.feeds),
+                "successful_feeds": 0,
+                "total_articles": 0,
+                "feeds_with_articles": 0
+            }
 
-                for l in f:
-                    l = l.strip().split(",")
+            logging.info("====== RSS Feed Processing ======")
+            logging.info(f"Processing {len(self.feed.feeds)} feeds...")
 
-                    # from username to id on the server
-                    if l[0] not in users_id_map:
-                        api_url = f"{self.config['servers']['api']}get_user_id"
-                        data = {
-                            "username": l[0],
-                        }
-                        uid = post(f"{api_url}", headers=headers, data=json.dumps(data))
+            for feed in self.feed.feeds:
+                initial_article_count = len(feed.news)
+                feed.read_feed()
+                articles_found = len(feed.news) - initial_article_count
+                if articles_found > 0:
+                    total_stats["feeds_with_articles"] += 1
+                    total_stats["total_articles"] += articles_found
+                    total_stats["successful_feeds"] += 1
 
-                        users_id_map[l[0]] = json.loads(uid.__dict__["_content"].decode("utf-8"))["id"]
+            logging.info("====== RSS Feed Processing Summary ======")
+            logging.info(f"Total feeds processed: {total_stats['total_feeds']}")
+            logging.info(f"Successful feeds: {total_stats['successful_feeds']}")
+            logging.info(f"Feeds with articles: {total_stats['feeds_with_articles']}")
+            logging.info(f"Total articles collected: {total_stats['total_articles']}")
 
-                    if l[1] not in users_id_map:
-                        api_url = f"{self.config['servers']['api']}get_user_id"
-                        data = {
-                            "username": l[1],
-                        }
-                        uid = post(f"{api_url}", headers=headers, data=json.dumps(data))
-                        users_id_map[l[1]] = json.loads(uid.__dict__["_content"].decode("utf-8"))["id"]
+            if total_stats['total_articles'] == 0:
+                logging.warning("No articles were found in any feeds!")
+                return False
+            return True
+        except Exception as e:
+            logging.error(f"Error loading RSS feeds: {str(e)}")
+            traceback.print_exc()
+            return False
 
-                    api_url = f"{self.config['servers']['api']}follow"
-
-                    data = {
-                        "user_id": users_id_map[l[0]],
-                        "target": users_id_map[l[1]],
-                        "action": "follow",
-                        "tid": 0,  # first round
-                    }
-
-                    post(f"{api_url}", headers=headers, data=json.dumps(data))
+    def load_news_from_urls(self, urls_file, max_urls=1000):
+        """
+        Load news articles from a list of URLs in a text file.
+        Uses URLReader to process URLs and logs statistics.
+        :param urls_file: Path to the file containing URLs (one per line)
+        :param max_urls: Maximum number of URLs to process (randomly sampled)
+        :return: True if articles were loaded successfully, False otherwise
+        """
+        import logging
+        import traceback
+        import random
+        try:
+            logging.info(f"Loading URLs from file: {urls_file}")
+            with open(urls_file, "r") as f:
+                urls = [line.strip() for line in f if line.strip()]
+            if not urls:
+                logging.warning("No URLs found in the file.")
+                return False
+            if len(urls) > max_urls:
+                logging.info(f"Sampling {max_urls} URLs from {len(urls)} available...")
+                urls = random.sample(urls, min(max_urls, len(urls)))
+            from y_client.news_feeds.url_reader import URLReader
+            url_reader = URLReader(urls)
+            stats = url_reader.process_urls()
+            if stats.get('processed', 0) == 0:
+                logging.warning("No articles were successfully processed from URLs!")
+                return False
+            logging.info(f"Articles processed from URLs: {stats['processed']}")
+            return True
+        except Exception as e:
+            logging.error(f"Error loading news from URLs: {str(e)}")
+            traceback.print_exc()
+            return False
