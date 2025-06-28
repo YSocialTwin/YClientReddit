@@ -176,8 +176,8 @@ class YClientWeb(object):
         logging.info(f"Loading RSS feeds from {rss_file}")
         try:
             self.load_feeds(rss_file)
-        else:
-            logging.info("No RSS feeds configured for this experiment (rss_feeds.json not found)")
+        except Exception as e:
+            logging.info(f"Failed to load RSS feeds: {e}")
             # Don't crash the simulation if RSS feeds fail to load
     def set_interests(self):
         """
@@ -226,7 +226,6 @@ class YClientWeb(object):
                     ag.set_prompts(self.prompts)
                     ag.set_rec_sys(self.content_recsys, self.follow_recsys)
                     self.agents.add_agent(ag)
-            except Exception:
             except Exception:
                 logging.exception(f"Error loading agent: {a['name']}")
     def churn(self, tid):

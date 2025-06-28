@@ -1,5 +1,6 @@
 try:
-    from .client_base import *
-    from .client_with_pages import *
-except:
+    # try the web-based implementation first
     from .client_web import *
+except ImportError:
+    # fallback to base implementation
+    from .client_base import *
