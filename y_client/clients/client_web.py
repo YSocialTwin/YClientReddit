@@ -2,10 +2,13 @@ import json
 import sys
 import os
 import shutil
+import logging
+import traceback
 from sqlalchemy.ext.declarative import declarative_base
 import sqlalchemy as db
 from requests import post
 from sqlalchemy import orm
+
 
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -164,19 +167,18 @@ class YClientWeb(object):
         Load and process RSS feeds if configured.
         Bridge method for Y_Web compatibility.
         """
+        import logging
         # Check if RSS feeds are configured in the experiment
         rss_file = os.path.join(self.base_path, "rss_feeds.json")
-        if os.path.exists(rss_file):
-            print(f"Loading RSS feeds from {rss_file}")
-            try:
-                self.load_feeds(rss_file)
-                print("RSS feeds loaded successfully")
-            except Exception as e:
-                print(f"Error loading RSS feeds: {e}")
-                # Don't crash the simulation if RSS feeds fail to load
+        if not os.path.exists(rss_file):
+            logging.info("No RSS feeds configured for this experiment (rss_feeds.json not found)")
+            return
+        logging.info(f"Loading RSS feeds from {rss_file}")
+        try:
+            self.load_feeds(rss_file)
         else:
-            print("No RSS feeds configured for this experiment (rss_feeds.json not found)")
-
+            logging.info("No RSS feeds configured for this experiment (rss_feeds.json not found)")
+            # Don't crash the simulation if RSS feeds fail to load
     def set_interests(self):
         """
         Set the interests of the agents
@@ -225,10 +227,8 @@ class YClientWeb(object):
                     ag.set_rec_sys(self.content_recsys, self.follow_recsys)
                     self.agents.add_agent(ag)
             except Exception:
-                import traceback
-                print(f"Error loading agent: {a['name']}")
-                traceback.print_exc()
-
+            except Exception:
+                logging.exception(f"Error loading agent: {a['name']}")
     def churn(self, tid):
         """
         Evaluate churn
@@ -270,8 +270,7 @@ class YClientWeb(object):
                 agent.set_prompts(self.prompts)
                 agent.set_rec_sys(self.content_recsys, self.follow_recsys)
             except Exception as e:
-                import traceback
-                print(f"Error generating agent: {e}")
+                logging.error(f"Error generating agent: {e}", exc_info=True)
                 traceback.print_exc()
         if agent is not None:
             self.agents.add_agent(agent)
