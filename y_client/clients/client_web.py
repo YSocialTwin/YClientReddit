@@ -143,6 +143,7 @@ class YClientWeb(object):
                     education_level=ag["education_level"],
                     round_actions=ag["round_actions"],
                     nationality=ag["nationality"],
+                    profession=ag["profession"],
                     toxicity=ag["toxicity"],
                     gender=ag["gender"],
                     age=ag["age"],
@@ -157,6 +158,24 @@ class YClientWeb(object):
                 )
                 agent.set_prompts(self.prompts)
                 self.agents.add_agent(agent)
+
+    def add_feeds(self):
+        """
+        Load and process RSS feeds if configured.
+        Bridge method for Y_Web compatibility.
+        """
+        # Check if RSS feeds are configured in the experiment
+        rss_file = os.path.join(self.base_path, "rss_feeds.json")
+        if os.path.exists(rss_file):
+            print(f"Loading RSS feeds from {rss_file}")
+            try:
+                self.load_feeds(rss_file)
+                print("RSS feeds loaded successfully")
+            except Exception as e:
+                print(f"Error loading RSS feeds: {e}")
+                # Don't crash the simulation if RSS feeds fail to load
+        else:
+            print("No RSS feeds configured for this experiment (rss_feeds.json not found)")
 
     def set_interests(self):
         """

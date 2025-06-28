@@ -37,6 +37,7 @@ class Agent(object):
         round_actions: int = 3,
         gender: str = None,
         nationality: str = None,
+        profession: str = None,
         toxicity: str = "no",
         api_key: str = "NULL",
         is_page: int = 0,
@@ -116,6 +117,7 @@ class Agent(object):
                 self.round_actions = round_actions
                 self.gender = gender
                 self.nationality = nationality
+                self.profession = profession
                 self.toxicity = toxicity
 
                 uid = self.__register()
@@ -204,6 +206,7 @@ class Agent(object):
         round_actions: int = 3,
         gender: str = None,
         nationality: str = None,
+        profession: str = None,
         toxicity: str = "no",
         api_key: str = "NULL",
         is_page: int = 0,
@@ -275,6 +278,7 @@ class Agent(object):
             self.round_actions = round_actions
             self.gender = gender
             self.nationality = nationality
+            self.profession = profession
 
             uid = self.__register()
             if uid is None:
