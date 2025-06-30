@@ -80,17 +80,27 @@ class YClientWeb(object):
 
         ##############
         BASE_DIR = os.path.dirname(os.path.abspath(__file__)).split("y_client")[0]
-        if not os.path.exists(f"{BASE_DIR}experiments/{self.config['simulation']['name']}.db"):
-            # copy the clean database to the experiments folder
-            shutil.copyfile(
-                f"{BASE_DIR}data_schema/database_clean_client.db",
-                f"{BASE_DIR}experiments/{self.config['simulation']['name']}.db",
-            )
+        
+        # Use the Y_Web experiment database instead of creating our own
+        if data_base_path and os.path.exists(f"{data_base_path}database_server.db"):
+            # Use the Y_Web experiment database
+            db_path = f"{data_base_path}database_server.db"
+            logging.info(f"Using Y_Web experiment database: {db_path}")
+        else:
+            # Fallback to standalone database (for backwards compatibility)
+            db_path = f"{BASE_DIR}experiments/{self.config['simulation']['name']}.db"
+            if not os.path.exists(db_path):
+                # copy the clean database to the experiments folder
+                shutil.copyfile(
+                    f"{BASE_DIR}data_schema/database_clean_client.db",
+                    db_path,
+                )
+            logging.info(f"Using standalone database: {db_path}")
 
         global session, engine, base
         base = declarative_base()
 
-        engine = db.create_engine(f"sqlite:////{BASE_DIR}experiments/{self.config['simulation']['name']}.db")
+        engine = db.create_engine(f"sqlite:////{db_path}")
         base.metadata.bind = engine
         session = orm.scoped_session(orm.sessionmaker())(bind=engine)
 
@@ -168,6 +178,27 @@ class YClientWeb(object):
         Bridge method for Y_Web compatibility.
         """
         import logging
+        
+        # Ensure session is properly set in the global scope for feed_reader
+        global session, engine, base
+        if session is not None:
+            # Import feed_reader modules and update their session reference
+            try:
+                import y_client.news_feeds.feed_reader as feed_reader_module
+                import y_client.news_feeds.client_modals as client_modals_module
+                
+                # Explicitly set the session and related objects in the modules
+                feed_reader_module.session = session
+                client_modals_module.session = session
+                client_modals_module.engine = engine  
+                client_modals_module.base = base
+                
+                logging.info("Database session properly initialized for RSS processing")
+            except ImportError as e:
+                logging.warning(f"Could not update session in feed_reader modules: {e}")
+        else:
+            logging.error("Database session is None! RSS feeds cannot be processed.")
+        
         # Check if RSS feeds are configured in the experiment
         rss_file = os.path.join(self.base_path, "rss_feeds.json")
         if not os.path.exists(rss_file):
@@ -177,7 +208,9 @@ class YClientWeb(object):
         try:
             self.load_feeds(rss_file)
         except Exception as e:
-            logging.info(f"Failed to load RSS feeds: {e}")
+            logging.error(f"Failed to load RSS feeds: {e}")
+            import traceback
+            traceback.print_exc()
             # Don't crash the simulation if RSS feeds fail to load
     def set_interests(self):
         """
