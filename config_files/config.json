@@ -2,8 +2,8 @@
   "servers": {
     "llm": "http://127.0.0.1:11434/v1",
     "llm_api_key": "NULL",
-    "llm_max_tokens": -1,
-    "llm_temperature": 1.5,
+    "llm_max_tokens": 800,
+    "llm_temperature": 0.6,
     "llm_v": "http://127.0.0.1:11434/v1",
     "llm_v_api_key": "NULL",
     "llm_v_max_tokens": 300,
@@ -47,10 +47,9 @@
     "actions_likelihood": {
       "post": 0.2,
       "image": 0.15,
-      "news": 0.8,
       "comment": 0.5,
       "read": 0.2,
-      "share": 0.8,
+      "share": 0.0,
       "search": 0.1,
       "cast": 0.0,
       "share_link": 0.3
@@ -59,7 +58,7 @@
   "agents": {
     "languages": ["english"],
     "education_levels": ["high school", "bachelor", "master", "phd"],
-    "max_length_thread_reading": 5,
+    "max_length_thread_reading": 4,
     "reading_from_follower_ratio": 0.6,
     "political_leanings": [
       "Democrat", "Republican", "Independent"
@@ -88,7 +87,12 @@
       "improbable sports", "bad tv shows", "niche music", "surreal science fiction", "smurfs habits",
       "books without readers", "silly political facts", "extreme gardening", "travel nightmares", "eccentric hobbies"
     ],
-    "toxicity_levels": ["no", "low", "average"],
+    "toxicity_levels": [
+            "absolutely no",
+            "no",
+            "moderately",
+            "extremely"
+        ],
     "attention_window": 336,
     "big_five": {
       "oe": ["inventive/curious", "consistent/cautious"],

@@ -37,6 +37,7 @@ class Agent(object):
         round_actions: int = 3,
         gender: str = None,
         nationality: str = None,
+        profession: str = None,
         toxicity: str = "no",
         api_key: str = "NULL",
         is_page: int = 0,
@@ -116,6 +117,7 @@ class Agent(object):
                 self.round_actions = round_actions
                 self.gender = gender
                 self.nationality = nationality
+                self.profession = profession
                 self.toxicity = toxicity
 
                 uid = self.__register()
@@ -204,6 +206,7 @@ class Agent(object):
         round_actions: int = 3,
         gender: str = None,
         nationality: str = None,
+        profession: str = None,
         toxicity: str = "no",
         api_key: str = "NULL",
         is_page: int = 0,
@@ -275,6 +278,7 @@ class Agent(object):
             self.round_actions = round_actions
             self.gender = gender
             self.nationality = nationality
+            self.profession = profession
 
             uid = self.__register()
             if uid is None:
@@ -658,89 +662,6 @@ class Agent(object):
         data = {"user_id": self.user_id, "interests": interests, "round": tid}
         post(f"{api_url}", headers=headers, data=json.dumps(data))
 
-    def news(self, tid, article, website):
-        """
-        Post a message to the service.
-
-        :param tid: the round id
-        :param article: the article
-        :param website: the website
-        """
-
-        u1 = AssistantAgent(
-            name=f"{self.name}",
-            llm_config=self.llm_config,
-            system_message=self.__effify(self.prompts["agent_roleplay_simple"]),
-            max_consecutive_auto_reply=1,
-        )
-
-        u2 = AssistantAgent(
-            name=f"Handler",
-            llm_config=self.llm_config,
-            system_message=self.__effify(self.prompts["handler_instructions"]),
-            max_consecutive_auto_reply=1,
-        )
-
-        u2.initiate_chat(
-            u1,
-            message=self.__effify(
-                self.prompts["handler_news"], website=website, article=article
-            ),
-            silent=True,
-            max_round=1,
-        )
-
-        emotion_eval = u2.chat_messages[u1][-1]["content"].lower()
-        emotion_eval = self.__clean_emotion(emotion_eval)
-
-        post_text = u2.chat_messages[u1][-2]["content"]
-
-        post_text = (
-            post_text.split(":")[-1]
-            .split("-")[-1]
-            .replace("@ ", "")
-            .replace("  ", " ")
-            .replace(". ", ".")
-            .replace(" ,", ",")
-            .replace("[", "")
-            .replace("]", "")
-            .replace("@,", "")
-        )
-        post_text = post_text.replace(f"@{self.name}", "")
-
-        hashtags = self.__extract_components(post_text, c_type="hashtags")
-        mentions = self.__extract_components(post_text, c_type="mentions")
-
-        st = json.dumps(
-            {
-                "user_id": self.user_id,
-                "tweet": post_text.replace('"', ""),
-                "emotions": emotion_eval,
-                "hashtags": hashtags,
-                "mentions": mentions,
-                "tid": tid,
-                "title": article.title,
-                "summary": article.summary,
-                "link": article.link,
-                "publisher": website.name,
-                "rss": website.rss,
-                "leaning": website.leaning,
-                "country": website.country,
-                "language": website.language,
-                "category": website.category,
-                "fetched_on": website.last_fetched,
-            }
-        )
-
-        u1.reset()
-        u2.reset()
-
-        headers = {"Content-Type": "application/x-www-form-urlencoded"}
-
-        api_url = f"{self.base_url}/news"
-        res = post(f"{api_url}", headers=headers, data=st)
-        return res
-
     def share_link(self, tid, article, website):
         """
         Share a link (article) with commentary.
@@ -1067,7 +988,7 @@ class Agent(object):
 
         u2 = AssistantAgent(
             name=f"Handler",
-            llm_config=self.llm_config,  # self.llm_config,
+            llm_config=self.llm_config,
             system_message=self.__effify(self.prompts["handler_instructions"]),
             max_consecutive_auto_reply=1,
         )
@@ -1140,7 +1061,7 @@ class Agent(object):
 
         u2 = AssistantAgent(
             name=f"Handler",
-            llm_config=self.llm_config,  # self.llm_config,
+            llm_config=self.llm_config,
             system_message=self.__effify(self.prompts["handler_instructions_simple"]),
             max_consecutive_auto_reply=0,
         )
@@ -1487,10 +1408,11 @@ class Agent(object):
 
         elif "SHARE_LINK" in text.split():
             article, website = self.select_link()
-            if not isinstance(article, str):
+            if article and website and not isinstance(article, str):
                 self.share_link(tid=tid, article=article, website=website)
             else:
                 # Fallback to regular post if no link is found
+                logging.info(f"Agent {self.name}: No suitable article found for SHARE_LINK, falling back to POST")
                 self.post(tid=tid)
 
         elif "SHARE" in text.split():
@@ -1626,6 +1548,22 @@ class Agent(object):
         """
         from y_client.news_feeds.feed_reader import News
         from sqlalchemy import or_
+        
+        # Get the session from global scope (same fix as in add_feeds method)
+        try:
+            from y_client.clients.client_web import session as global_session
+            if global_session is not None:
+                current_session = global_session
+            else:
+                # Fallback to module-level session
+                current_session = session
+        except ImportError:
+            current_session = session
+            
+        if current_session is None:
+            import logging
+            logging.error("Database session is None in select_link! Cannot query articles.")
+            return "", ""
 
         # Get agent's interests
         interests, _ = self.__get_interests(-1)
@@ -1635,7 +1573,7 @@ class Agent(object):
             return self.select_news()
 
         # Get all website IDs without filtering by leaning
-        website_ids = session.query(Websites.id).all()
+        website_ids = current_session.query(Websites.id).all()
 
         if len(website_ids) == 0:
             return "", ""
@@ -1654,21 +1592,21 @@ class Agent(object):
         # If we have search conditions, query for matching articles
         matching_articles = []
         if search_conditions:
-            matching_articles = session.query(Articles).filter(
+            matching_articles = current_session.query(Articles).filter(
                 Articles.website_id.in_(website_ids),
                 or_(*search_conditions)
             ).order_by(func.random()).limit(10).all()
 
         # If no matching articles found, fall back to random selection
         if not matching_articles:
-            random_article = session.query(Articles).filter(
+            random_article = current_session.query(Articles).filter(
                 Articles.website_id.in_(website_ids)
             ).order_by(func.random()).first()
 
             if not random_article:
                 return "", ""
 
-            website = session.query(Websites).filter(Websites.id == random_article.website_id).first()
+            website = current_session.query(Websites).filter(Websites.id == random_article.website_id).first()
 
             if not website:
                 return "", ""
@@ -1680,16 +1618,22 @@ class Agent(object):
                 published=random_article.fetched_on
             )
 
-            # Get image if available
-            image = session.query(Images).filter(Images.article_id == random_article.id).first()
-            if image:
-                news_obj.image_url = image.url
+            # Get image if available (handle schema differences between YClientReddit and Y_Web)
+            try:
+                image = current_session.query(Images).filter(Images.article_id == random_article.id).first()
+                if image:
+                    news_obj.image_url = image.url
+            except Exception as e:
+                # Handle schema mismatch - Y_Web database doesn't have remote_article_id column
+                import logging
+                logging.warning(f"Could not query images due to schema mismatch: {e}")
+                # Continue without image
 
             return news_obj, website
 
         # If we found matching articles, choose one randomly
         selected_article = random.choice(matching_articles)
-        website = session.query(Websites).filter(Websites.id == selected_article.website_id).first()
+        website = current_session.query(Websites).filter(Websites.id == selected_article.website_id).first()
 
         if not website:
             return "", ""
@@ -1701,10 +1645,16 @@ class Agent(object):
             published=selected_article.fetched_on
         )
 
-        # Get image if available
-        image = session.query(Images).filter(Images.article_id == selected_article.id).first()
-        if image:
-            news_obj.image_url = image.url
+        # Get image if available (handle schema differences between YClientReddit and Y_Web)
+        try:
+            image = current_session.query(Images).filter(Images.article_id == selected_article.id).first()
+            if image:
+                news_obj.image_url = image.url
+        except Exception as e:
+            # Handle schema mismatch - Y_Web database doesn't have remote_article_id column
+            import logging
+            logging.warning(f"Could not query images due to schema mismatch: {e}")
+            # Continue without image
 
         return news_obj, website
 

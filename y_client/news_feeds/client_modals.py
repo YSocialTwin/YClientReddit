@@ -8,22 +8,32 @@ import shutil
 
 try:
     BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+    # Try to find a client config json in the parent experiments directory
+    import glob
+    config_files = glob.glob(f"{BASE_DIR}/../../experiments/client_*.json")
+    if config_files:
+        config_path = config_files[0]
+        config = json.load(open(config_path))
+        db_name = config['simulation']['name']
+    else:
+        config = None
+        db_name = None
 
-    # read the experiment configuration (hardcoded config filename is a big issue!)
-    config = json.load(open("experiments/current_config.json"))
-
-    if not os.path.exists(f"experiments/{config['simulation']['name']}.db"):
-        # copy the clean database to the experiments folder
+    if config and not os.path.exists(f"{BASE_DIR}/../../experiments/{db_name}.db"):
         shutil.copyfile(
             f"{BASE_DIR}/../../data_schema/database_clean_client.db",
-            f"{BASE_DIR}/../../experiments/{config['simulation']['name']}.db",
+            f"{BASE_DIR}/../../experiments/{db_name}.db",
         )
 
     base = declarative_base()
-    engine = db.create_engine(f"sqlite:///experiments/{config['simulation']['name']}.db")
-    base.metadata.bind = engine
-    session = orm.scoped_session(orm.sessionmaker())(bind=engine)
-except:
+    if db_name:
+        engine = db.create_engine(f"sqlite:///experiments/{db_name}.db")
+        base.metadata.bind = engine
+        session = orm.scoped_session(orm.sessionmaker())(bind=engine)
+    else:
+        engine = None
+        session = None
+except Exception:
     from y_client.clients.client_web import base, session
     pass
 

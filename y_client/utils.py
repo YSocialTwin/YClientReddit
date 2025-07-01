@@ -2,10 +2,9 @@ import random
 import json
 import faker
 try:
-    from y_client import Agent, PageAgent
+    from y_client import Agent
 except:
     from y_client.classes.base_agent import Agent
-    from y_client.classes.page_agent import PageAgent
 
 
 def generate_user(config, owner=None):
@@ -99,61 +98,3 @@ def generate_user(config, owner=None):
     if not hasattr(agent, "user_id"):
         print(f"Agent creation failed: {name} - no user_id assigned")
         return None
-
-    return agent
-
-
-def generate_page(config, owner=None, name=None, feed_url=None):
-    """
-    Generate a fake page
-    :param config: configuration dictionary
-    :param name: name of the page
-    :param feed_url: feed url of the page
-    :return: Agent object
-    """
-
-    fake = faker.Faker()
-
-    try:
-        round_actions = fake.random_int(
-            min=config["agents"]["round_actions"]["min"],
-            max=config["agents"]["round_actions"]["max"],
-        )
-    except:
-        round_actions = 3
-
-    big_five = {
-        "oe": fake.random_element(elements=(config["agents"]["big_five"]["oe"])),
-        "co": fake.random_element(elements=(config["agents"]["big_five"]["co"])),
-        "ex": fake.random_element(elements=(config["agents"]["big_five"]["ex"])),
-        "ag": fake.random_element(elements=(config["agents"]["big_five"]["ag"])),
-        "ne": fake.random_element(elements=(config["agents"]["big_five"]["ne"])),
-    }
-
-    api_key = config["servers"]["llm_api_key"]
-
-    email = f"{name.replace(' ', '.')}@{fake.free_email_domain()}"
-
-    page = PageAgent(
-        name=name,
-        pwd="",
-        email=email,
-        age=0,
-        ag_type=fake.random_element(elements=(config["agents"]["llm_agents"])),
-        leaning=None,
-        interests=[],
-        config=config,
-        big_five=big_five,
-        language=None,
-        education_level=None,
-        owner=owner,
-        round_actions=round_actions,
-        gender=None,
-        nationality=None,
-        toxicity=None,
-        api_key=api_key,
-        feed_url=feed_url,
-        is_page=1,
-    )
-
-    return page
