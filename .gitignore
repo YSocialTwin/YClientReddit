@@ -162,3 +162,5 @@ cython_debug/
 #.idea/
 
 check-files.sh
+experiments/*.db
+y_client/clients/client_base_backup.py
