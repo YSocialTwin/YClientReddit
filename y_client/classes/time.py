@@ -18,7 +18,14 @@ class SimulationSlot(object):
         headers = {"Content-Type": "application/x-www-form-urlencoded"}
 
         response = get(f"{api_url}", headers=headers)
-        data = json.loads(response.__dict__["_content"].decode("utf-8"))
+        
+        if response.status_code != 200:
+            raise Exception(f"Server returned status {response.status_code}: {response.text}")
+        
+        if not response.content:
+            raise Exception("Server returned empty response")
+            
+        data = json.loads(response.text)
 
         self.day = data["day"]
         self.slot = data["round"]
@@ -36,7 +43,14 @@ class SimulationSlot(object):
         headers = {"Content-Type": "application/x-www-form-urlencoded"}
 
         response = get(f"{api_url}", headers=headers)
-        data = json.loads(response.__dict__["_content"].decode("utf-8"))
+        
+        if response.status_code != 200:
+            raise Exception(f"get_current_slot: Server returned status {response.status_code}: {response.text}")
+        
+        if not response.content:
+            raise Exception("get_current_slot: Server returned empty response")
+            
+        data = json.loads(response.text)
 
         self.day = data["day"]
         self.slot = data["round"]
@@ -65,7 +79,14 @@ class SimulationSlot(object):
             params = {"day": day, "round": slot}
             st = json.dumps(params)
             response = post(f"{api_url}", headers=headers, data=st)
-            data = json.loads(response.__dict__["_content"].decode("utf-8"))
+            
+            if response.status_code != 200:
+                raise Exception(f"increment_slot: Server returned status {response.status_code}: {response.text}")
+            
+            if not response.content:
+                raise Exception("increment_slot: Server returned empty response")
+                
+            data = json.loads(response.text)
 
             self.day = int(data["day"])
             self.slot = int(data["round"])
