@@ -618,7 +618,7 @@ class Agent(object):
 
         u2.initiate_chat(
             u1,
-            message=self.__effify(self.prompts["handler_post"]),
+            message=self.__effify(self.prompts["handler_post"], interests=interests),
             silent=True,
             max_round=1,
         )
