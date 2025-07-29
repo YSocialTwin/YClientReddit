@@ -11,6 +11,7 @@ import json
 from autogen import AssistantAgent
 import numpy as np
 import re
+import logging
 
 __all__ = ["Agent", "Agents"]
 
@@ -210,6 +211,7 @@ class Agent(object):
         toxicity: str = "no",
         api_key: str = "NULL",
         is_page: int = 0,
+        daily_activity_level: int = 1,
         *args,
         **kwargs,):
 
@@ -279,12 +281,10 @@ class Agent(object):
             self.gender = gender
             self.nationality = nationality
             self.profession = profession
+            self.daily_activity_level = daily_activity_level
 
             uid = self.__register()
-            if uid is None:
-                pass
-            else:
-                self.user_id = uid
+            self.user_id = uid
 
         else:
             us = json.loads(self.__get_user())
@@ -321,6 +321,8 @@ class Agent(object):
             self.toxicity = us["toxicity"]
             self.nationality = us["nationality"]
             self.is_page = us["is_page"]
+            self.daily_activity_level = us.get("daily_activity_level", 1)
+            self.profession = us.get("profession", "")
 
         config_list = {
             "model": f"{self.type}",
@@ -457,9 +459,9 @@ class Agent(object):
 
         :return: the user
         """
-        res = json.loads(self._check_credentials())
-        if res["status"] == 404:
-            raise Exception("User not found")
+        #res = json.loads(self._check_credentials())
+        #if res["status"] == 404:
+        #    raise Exception("User not found")
         api_url = f"{self.base_url}get_user"
 
         headers = {"Content-Type": "application/x-www-form-urlencoded"}
@@ -515,22 +517,21 @@ class Agent(object):
                 "toxicity": self.toxicity,
                 "joined_on": self.joined_on,
                 "is_page": self.is_page,
+                "daily_activity_level": self.daily_activity_level,
+                "profession": self.profession,
             }
         )
 
         headers = {"Content-Type": "application/x-www-form-urlencoded"}
 
-        api_url = f"{self.base_url}/register"
-        post(f"{api_url}", headers=headers, data=st)
+        api_url = f"{self.base_url}register"
+        response = post(f"{api_url}", headers=headers, data=st)
 
-        try:
-            res = json.loads(self.__get_user())
-            uid = int(res["id"])
-        except Exception as e:
-            print(f"Agent registration failed for {self.name}: {e}")
-            return None
+        us = self.__get_user()
+        res = json.loads(us)
+        uid = int(res["id"])
 
-        api_url = f"{self.base_url}/set_user_interests"
+        api_url = f"{self.base_url}set_user_interests"
         data = {"user_id": uid, "interests": self.interests, "round": self.joined_on}
 
         post(f"{api_url}", headers=headers, data=json.dumps(data))
@@ -1446,11 +1447,12 @@ class Agent(object):
         """
         selected_post = json.loads(self.read_mentions())
         if "status" not in selected_post:
-            self.comment(
-                int(selected_post[0]),
-                max_length_threads=max_length_thread_reading,
-                tid=tid,
-            )
+            if len(selected_post) > 0:
+                self.comment(
+                    int(selected_post['post_id']),
+                    max_length_threads=max_length_thread_reading,
+                    tid=tid,
+                )
         return
 
     def read(self, article=False):
@@ -1561,7 +1563,6 @@ class Agent(object):
             current_session = session
             
         if current_session is None:
-            import logging
             logging.error("Database session is None in select_link! Cannot query articles.")
             return "", ""
 
@@ -1625,7 +1626,6 @@ class Agent(object):
                     news_obj.image_url = image.url
             except Exception as e:
                 # Handle schema mismatch - Y_Web database doesn't have remote_article_id column
-                import logging
                 logging.warning(f"Could not query images due to schema mismatch: {e}")
                 # Continue without image
 
@@ -1652,7 +1652,6 @@ class Agent(object):
                 news_obj.image_url = image.url
         except Exception as e:
             # Handle schema mismatch - Y_Web database doesn't have remote_article_id column
-            import logging
             logging.warning(f"Could not query images due to schema mismatch: {e}")
             # Continue without image
 

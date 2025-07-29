@@ -4,6 +4,7 @@ import os
 import shutil
 import logging
 import traceback
+import random
 from sqlalchemy.ext.declarative import declarative_base
 import sqlalchemy as db
 from requests import post
@@ -107,6 +108,7 @@ class YClientWeb(object):
         globals()["session"] = session
         globals()["engine"] = engine
         globals()["base"] = base
+        
         ##############
 
         yclient_path = os.path.dirname(os.path.abspath(__file__)).split("y_web")[0]
@@ -123,6 +125,7 @@ class YClientWeb(object):
         self.content_recsys = None
         self.follow_recsys = None
         self.network = network
+        self.pages = []
 
     def read_agents(self):
         """
@@ -135,7 +138,7 @@ class YClientWeb(object):
         import y_client.recsys as frecsys
 
         # population filename
-        self.agents_filename = f"{self.base_path}{self.config['simulation']['population']}.json"
+        self.agents_filename = f"{self.base_path}{self.config['simulation']['population'].replace(' ', '')}.json"
         data = json.load(open(self.agents_filename, "r"))
         for ag in data['agents']:
             if ag["is_page"] == 0:
@@ -171,6 +174,7 @@ class YClientWeb(object):
                 )
                 agent.set_prompts(self.prompts)
                 self.agents.add_agent(agent)
+                
 
     def add_feeds(self):
         """
@@ -212,17 +216,9 @@ class YClientWeb(object):
             import traceback
             traceback.print_exc()
             # Don't crash the simulation if RSS feeds fail to load
-    def set_interests(self):
-        """
-        Set the interests of the agents
-        """
-        api_url = f"{self.config['servers']['api']}set_interests"
 
-        headers = {"Content-Type": "application/x-www-form-urlencoded"}
 
-        data = self.config["agents"]["interests"]
 
-        post(f"{api_url}", headers=headers, data=json.dumps(data))
 
     def set_recsys(self, c_recsys, f_recsys):
         """
@@ -285,6 +281,8 @@ class YClientWeb(object):
 
             self.agents.remove_agent_by_ids(data)
 
+
+
     def add_agent(self, agent=None):
         """
         Add an agent to the simulation
@@ -304,6 +302,7 @@ class YClientWeb(object):
             except Exception as e:
                 logging.error(f"Error generating agent: {e}", exc_info=True)
                 traceback.print_exc()
+        
         if agent is not None:
             self.agents.add_agent(agent)
 
