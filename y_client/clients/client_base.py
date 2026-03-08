@@ -2,7 +2,10 @@ import random
 import tqdm
 import sys
 import os
+import json
+import logging
 import networkx as nx
+from pathlib import Path
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 sys.path.append(os.path.dirname(SCRIPT_DIR))
@@ -36,7 +39,7 @@ class YClientBase(object):
         if prompts_filename is None:
             raise Exception("Prompts file not found")
 
-        self.prompts = json.load(open(prompts_filename, "r"))
+        self.prompts = self._load_prompts_with_defaults(prompts_filename)
         self.config = json.load(open(config_filename, "r"))
         self.agents_owner = owner
         self.agents_filename = agents_filename
@@ -56,10 +59,16 @@ class YClientBase(object):
             a.upper(): float(v)
             for a, v in self.config["simulation"]["actions_likelihood"].items()
         }
+        # Forum experiments do not allow repost/share of other users' content.
+        if "SHARE" in self.actions_likelihood:
+            self.actions_likelihood["SHARE"] = 0.0
         tot = sum(self.actions_likelihood.values())
-        self.actions_likelihood = {
-            k: v / tot for k, v in self.actions_likelihood.items()
-        }
+        if tot <= 0:
+            self.actions_likelihood = {"NONE": 1.0}
+        else:
+            self.actions_likelihood = {
+                k: v / tot for k, v in self.actions_likelihood.items()
+            }
 
         # users' parameters
         self.fratio = self.config["agents"]["reading_from_follower_ratio"]
@@ -84,6 +93,38 @@ class YClientBase(object):
             self.g = nx.convert_node_labels_to_integers(self.g, first_label=0)
         else:
             self.g = None
+
+    def _load_prompts_with_defaults(self, prompts_filename: str):
+        with open(prompts_filename, "r") as f:
+            exp_prompts = json.load(f)
+        if not isinstance(exp_prompts, dict):
+            exp_prompts = {}
+
+        default_prompts = {}
+        candidate_defaults = [
+            # Package-local defaults.
+            Path(__file__).resolve().parents[2] / "config_files" / "prompts.json",
+            # YSocial forum defaults (available when running inside the monorepo).
+            # These should override package-local defaults for forum mode.
+            Path(__file__).resolve().parents[4] / "data_schema" / "prompts_forum.json",
+        ]
+        for candidate in candidate_defaults:
+            try:
+                if not candidate.exists():
+                    continue
+                with open(candidate, "r") as f:
+                    loaded = json.load(f)
+                if isinstance(loaded, dict):
+                    default_prompts.update(loaded)
+            except Exception as exc:
+                logging.warning(f"Could not load default prompts from {candidate}: {exc}")
+
+        if not default_prompts:
+            return exp_prompts
+
+        merged = dict(default_prompts)
+        merged.update(exp_prompts)
+        return merged
 
     @staticmethod
     def reset_news_db():
@@ -231,24 +272,38 @@ class YClientBase(object):
         self.content_recsys = c_recsys
         self.follow_recsys = f_recsys
 
-    def add_agent(self, agent=None):
+    def add_agent(self, agent=None, username_type=None):
         """
         Add an agent to the simulation
 
         :param agent: the agent to add
         """
         if agent is None:
-            try:
-                agent = generate_user(self.config, owner=self.agents_owner)
+            max_attempts = 8
+            used_names = {a.name for a in self.agents.agents if getattr(a, "name", None)}
+            for attempt in range(max_attempts):
+                try:
+                    agent = generate_user(
+                        self.config,
+                        owner=self.agents_owner,
+                        username_type=username_type,
+                        used_names=used_names,
+                    )
+                    if agent is None:
+                        continue
+                    agent.set_prompts(self.prompts)
+                    agent.set_rec_sys(self.content_recsys, self.follow_recsys)
+                    break
+                except Exception as e:
+                    print(
+                        f"Error creating agent (attempt {attempt + 1}/{max_attempts}): {e}"
+                    )
+                    import traceback
 
-                if agent is None:
-                    return
-                agent.set_prompts(self.prompts)
-                agent.set_rec_sys(self.content_recsys, self.follow_recsys)
-            except Exception as e:
-                print(f"Error creating agent: {e}")
-                import traceback
-                traceback.print_exc()
+                    traceback.print_exc()
+                    agent = None
+            if agent is None:
+                return
         if agent is not None:
             self.agents.add_agent(agent)
 
@@ -385,6 +440,10 @@ class YClientBase(object):
                             actions=candidates,
                             max_length_thread_reading=self.max_length_thread_reading,
                         )
+
+                    # Reset post counter and temperature after agent's round is complete
+                    g.reset_round_post_count()
+
                 # increment slot
                 self.sim_clock.increment_slot()
 

@@ -4,7 +4,9 @@ import os
 import shutil
 import logging
 import traceback
-import datetime
+import time
+import random
+from pathlib import Path
 from sqlalchemy.ext.declarative import declarative_base
 import sqlalchemy as db
 from requests import post
@@ -20,7 +22,6 @@ base = None
 
 from y_client.classes import Agent, Agents, SimulationSlot
 from y_client.news_feeds import Feeds
-from y_client.news_feeds.client_modals import ImagePosts
 
 
 class YClientWeb(object):
@@ -59,7 +60,7 @@ class YClientWeb(object):
         self.base_path = data_base_path
         self.config = config_file
 
-        self.prompts = json.load(open(f"{data_base_path}prompts.json", "r"))
+        self.prompts = self._load_prompts_with_defaults(data_base_path)
 
         self.agents_owner = owner
         self.agents_filename = agents_filename
@@ -78,10 +79,16 @@ class YClientWeb(object):
             a.upper(): float(v)
             for a, v in self.config["simulation"]["actions_likelihood"].items()
         }
+        # Forum experiments do not allow repost/share of other users' content.
+        if "SHARE" in self.actions_likelihood:
+            self.actions_likelihood["SHARE"] = 0.0
         tot = sum(self.actions_likelihood.values())
-        self.actions_likelihood = {
-            k: v / tot for k, v in self.actions_likelihood.items()
-        }
+        if tot <= 0:
+            self.actions_likelihood = {"NONE": 1.0}
+        else:
+            self.actions_likelihood = {
+                k: v / tot for k, v in self.actions_likelihood.items()
+            }
 
         # users' parameters
         self.fratio = float(self.config["agents"]["reading_from_follower_ratio"])
@@ -95,17 +102,23 @@ class YClientWeb(object):
         ##############
         BASE_DIR = os.path.dirname(os.path.abspath(__file__)).split("y_client")[0]
 
+        # Check for PostgreSQL via environment variable or data_base_path
         database_url = os.environ.get("DATABASE_URL")
+
         if database_url and "postgresql" in database_url:
+            # PostgreSQL mode
             db_uri = database_url
             logging.info(f"Using PostgreSQL database: {db_uri}")
         elif data_base_path and os.path.exists(f"{data_base_path}database_server.db"):
+            # Use the Y_Web experiment database (SQLite)
             db_path = f"{data_base_path}database_server.db"
             db_uri = f"sqlite:////{db_path}"
             logging.info(f"Using Y_Web experiment database: {db_path}")
         else:
+            # Fallback to standalone database (for backwards compatibility)
             db_path = f"{BASE_DIR}experiments/{self.config['simulation']['name']}.db"
             if not os.path.exists(db_path):
+                # copy the clean database to the experiments folder
                 shutil.copyfile(
                     f"{BASE_DIR}data_schema/database_clean_client.db",
                     db_path,
@@ -116,15 +129,12 @@ class YClientWeb(object):
         global session, engine, base
         base = declarative_base()
 
+        # Create engine with appropriate options
         if "postgresql" in db_uri:
             from sqlalchemy.pool import NullPool
-
             engine = db.create_engine(db_uri, poolclass=NullPool)
         else:
-            engine = db.create_engine(
-                db_uri,
-                connect_args={"check_same_thread": False, "timeout": 30},
-            )
+            engine = db.create_engine(db_uri, connect_args={"check_same_thread": False, "timeout": 30})
         base.metadata.bind = engine
         session = orm.scoped_session(orm.sessionmaker())(bind=engine)
 
@@ -133,7 +143,8 @@ class YClientWeb(object):
         globals()["base"] = base
         ##############
 
-        self._ensure_image_posts_populated(data_base_path)
+        # Ensure images are populated for all experiments
+        self._ensure_images_populated(data_base_path, engine)
 
         yclient_path = os.path.dirname(os.path.abspath(__file__)).split("y_web")[0]
         sys.path.append(f'{yclient_path}{os.sep}external{os.sep}YClient/')
@@ -148,145 +159,312 @@ class YClientWeb(object):
         self.network = network
         self.pages = []  # Reddit doesn't have page agents, all are regular users
 
-    def _ensure_image_posts_populated(self, data_base_path):
-        """Populate the standalone image pool from image_feeds.json when present."""
-        import feedparser
-        import re
-        from sqlalchemy import text
+    def _load_prompts_with_defaults(self, data_base_path: str):
+        exp_prompts_path = Path(data_base_path) / "prompts.json"
+        with open(exp_prompts_path, "r") as f:
+            exp_prompts = json.load(f)
+        if not isinstance(exp_prompts, dict):
+            exp_prompts = {}
 
-        image_feeds_path = os.path.join(data_base_path, "image_feeds.json")
-        if not os.path.exists(image_feeds_path):
-            return
+        default_prompts = {}
+        candidate_defaults = [
+            # Package-local fallback defaults.
+            Path(__file__).resolve().parents[2] / "config_files" / "prompts.json",
+            # YSocial forum defaults used when creating new forum clients.
+            # These should override package-local defaults for forum mode.
+            Path(__file__).resolve().parents[4] / "data_schema" / "prompts_forum.json",
+        ]
 
-        create_table_sql = """
-            CREATE TABLE IF NOT EXISTS image_posts (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                url VARCHAR(500) NOT NULL,
-                source_url VARCHAR(500),
-                title VARCHAR(300),
-                subreddit VARCHAR(100),
-                description TEXT,
-                fetched_on VARCHAR(20),
-                used BOOLEAN DEFAULT 0
+        for candidate in candidate_defaults:
+            try:
+                if not candidate.exists():
+                    continue
+                with open(candidate, "r") as f:
+                    loaded = json.load(f)
+                if isinstance(loaded, dict):
+                    default_prompts.update(loaded)
+            except Exception as exc:
+                logging.warning(f"Could not load default prompts from {candidate}: {exc}")
+
+        if not default_prompts:
+            return exp_prompts
+
+        merged = dict(default_prompts)
+        merged.update(exp_prompts)
+        missing = [k for k in default_prompts.keys() if k not in exp_prompts]
+        if missing:
+            logging.info(
+                "Merged %d missing default prompts into experiment prompts at %s",
+                len(missing),
+                exp_prompts_path,
             )
+        return merged
+
+    def _ensure_images_populated(self, data_base_path, engine):
         """
-        if engine.dialect.name == "postgresql":
-            create_table_sql = """
-                CREATE TABLE IF NOT EXISTS image_posts (
-                    id SERIAL PRIMARY KEY,
-                    url VARCHAR(500) NOT NULL,
-                    source_url VARCHAR(500),
-                    title VARCHAR(300),
-                    subreddit VARCHAR(100),
-                    description TEXT,
-                    fetched_on VARCHAR(20),
-                    used BOOLEAN DEFAULT FALSE
-                )
-            """
+        Ensure image_posts table is populated for PostgreSQL experiments.
 
-        with engine.begin() as conn:
-            conn.execute(text(create_table_sql))
-            existing_count = conn.execute(text("SELECT COUNT(*) FROM image_posts")).scalar()
-            if existing_count and int(existing_count) > 0:
-                return
+        Checks if the image_posts table is empty. If empty and image_feeds.json
+        exists in the experiment folder, populates the table from Reddit RSS feeds.
+        This runs automatically on client startup for PostgreSQL experiments.
+        """
+        import time
+        import re
+        import json
+        import datetime
+        from sqlalchemy import text
+        from y_client.news_feeds.feed_reader import parse_feed_with_retry
 
-        try:
-            with open(image_feeds_path, "r") as f:
-                feeds = json.load(f)
-        except Exception as exc:
-            logging.warning("Could not read image feeds from %s: %s", image_feeds_path, exc)
-            return
-
-        image_pattern = re.compile(r"\.(jpg|jpeg|png|gif|webp)(\?.*)?$", re.IGNORECASE)
-        timestamp = datetime.datetime.now().strftime("%Y%m%d")
-
-        def is_nsfw(entry):
+        IMAGE_EXTENSIONS = r"\.(jpg|jpeg|png|gif|webp)(\?.*)?$"
+        def is_nsfw(entry) -> bool:
+            """Check if RSS entry is NSFW."""
             if hasattr(entry, "over_18") and entry.over_18:
                 return True
+            if hasattr(entry, "tags"):
+                for tag in entry.tags:
+                    if hasattr(tag, "term") and tag.term.lower() in ["nsfw", "over_18"]:
+                        return True
             title = entry.title.lower() if hasattr(entry, "title") else ""
-            return "[nsfw]" in title or "(nsfw)" in title
+            if "[nsfw]" in title or "(nsfw)" in title:
+                return True
+            return False
 
         def extract_image_url(entry):
+            """Extract image URL from RSS entry, preserving signed params for Reddit preview URLs."""
             candidates = []
 
-            if hasattr(entry, "link") and image_pattern.search(entry.link):
-                url = entry.link
-                if "preview.redd.it" not in url and "external-preview" not in url:
-                    url = url.split("?")[0]
-                candidates.append(url)
+            if hasattr(entry, "link"):
+                if re.search(IMAGE_EXTENSIONS, entry.link, re.IGNORECASE):
+                    url = entry.link
+                    if "preview.redd.it" not in url and "external-preview" not in url:
+                        url = url.split("?")[0]
+                    candidates.append(url)
 
             if hasattr(entry, "media_content"):
                 for media in entry.media_content:
-                    url = media.get("url", "")
-                    if image_pattern.search(url):
+                    if "url" in media and re.search(IMAGE_EXTENSIONS, media["url"], re.IGNORECASE):
+                        url = media["url"]
                         if "preview.redd.it" not in url and "external-preview" not in url:
                             url = url.split("?")[0]
                         candidates.append(url)
 
             if hasattr(entry, "media_thumbnail"):
                 for thumb in entry.media_thumbnail:
-                    url = thumb.get("url", "")
-                    if url:
-                        candidates.append(url)
+                    if "url" in thumb:
+                        candidates.append(thumb["url"])
 
             if hasattr(entry, "summary"):
-                match = re.search(r'<img[^>]+src="([^"]+)"', entry.summary)
-                if match:
-                    candidates.append(match.group(1).replace("&amp;", "&"))
+                img_match = re.search(r'<img[^>]+src="([^"]+)"', entry.summary)
+                if img_match:
+                    url = img_match.group(1).replace("&amp;", "&")
+                    candidates.append(url)
 
             if not candidates:
                 return None
 
-            for url in candidates:
-                if "i.redd.it" in url or "imgur.com" in url:
+            # Avoid tiny thumbnails (thumbs.redditmedia.com) when possible.
+            non_thumb_candidates = [
+                u for u in candidates if "thumbs.redditmedia.com" not in u
+            ] or candidates
+
+            # Prefer direct/fullsize domains first.
+            preferred_domains = ["i.redd.it", "imgur.com", "i.imgur.com"]
+            for url in non_thumb_candidates:
+                if any(domain in url for domain in preferred_domains):
                     return url
-            for url in candidates:
+
+            for url in non_thumb_candidates:
                 if "preview.redd.it" in url and "?" in url:
                     return url
-            return candidates[0]
 
-        added = 0
-        with engine.begin() as conn:
-            for item in feeds:
-                if not isinstance(item, dict):
-                    continue
-                subreddit = str(item.get("subreddit", "")).strip().lower()
-                subreddit = subreddit[2:] if subreddit.startswith("r/") else subreddit
+            # If all we found are thumbnails, skip this entry entirely.
+            if all("thumbs.redditmedia.com" in u for u in candidates):
+                return None
+
+            return non_thumb_candidates[0]
+
+        try:
+            # Check if image_posts table is empty
+            with engine.connect() as conn:
+                result = conn.execute(text("SELECT COUNT(*) FROM image_posts"))
+                count = result.scalar()
+
+            if count > 0:
+                logging.info(f"image_posts table already has {count} images, skipping population")
+                return
+
+            # Check for image_feeds.json
+            image_feeds_path = os.path.join(data_base_path, "image_feeds.json")
+            if not os.path.exists(image_feeds_path):
+                logging.info("No image_feeds.json found, skipping image population")
+                return
+
+            logging.info(f"image_posts table is empty, populating from {image_feeds_path}")
+
+            # Import download functions
+            from y_client.news_feeds.image_feed_reader import (
+                download_image_checked, extract_high_res_url, generate_filename,
+                IMAGE_STORAGE_DIR
+            )
+
+            with open(image_feeds_path) as f:
+                feeds = json.load(f)
+
+            timestamp = datetime.datetime.now().strftime("%Y%m%d")
+            total_added = 0
+            total_downloaded = 0
+
+            # Setup storage directory (in y_web/static)
+            storage_path = Path(data_base_path).parent.parent / "static" / IMAGE_STORAGE_DIR
+            storage_path.mkdir(parents=True, exist_ok=True)
+            logging.info(f"Image storage directory: {storage_path}")
+
+            for i, feed in enumerate(feeds):
+                subreddit = feed.get("subreddit")
                 if not subreddit:
                     continue
 
-                parsed = feedparser.parse(f"https://www.reddit.com/r/{subreddit}.rss")
-                for entry in parsed.entries[:25]:
-                    if is_nsfw(entry):
-                        continue
-                    image_url = extract_image_url(entry)
-                    if not image_url:
-                        continue
-                    exists = conn.execute(
-                        text("SELECT id FROM image_posts WHERE url = :url"),
-                        {"url": image_url},
-                    ).fetchone()
-                    if exists:
-                        continue
-                    conn.execute(
-                        text(
-                            """
-                            INSERT INTO image_posts (url, source_url, title, subreddit, fetched_on, used)
-                            VALUES (:url, :source_url, :title, :subreddit, :fetched_on, false)
-                            """
-                        ),
-                        {
-                            "url": image_url,
-                            "source_url": getattr(entry, "link", None),
-                            "title": getattr(entry, "title", "")[:300],
-                            "subreddit": subreddit,
-                            "fetched_on": timestamp,
-                        },
-                    )
-                    added += 1
+                # Rate limiting for Reddit RSS feeds (~5-7 seconds between requests)
+                if i > 0:  # Don't delay before first feed
+                    delay = 5.0 + random.uniform(0, 2)  # 5-7 second jitter
+                    logging.info(f"Rate limiting: waiting {delay:.1f}s before next image feed...")
+                    time.sleep(delay)
 
-        if added:
-            logging.info("Seeded %s standalone images from %s", added, image_feeds_path)
+                logging.info(f"Fetching images from r/{subreddit}...")
+
+                try:
+                    feed_url = f"https://www.reddit.com/r/{subreddit}.rss"
+                    rss_feed, used_url, error = parse_feed_with_retry(
+                        feed_url,
+                        timeout=20,
+                        max_retries=3,
+                        backoff_seconds=2.0,
+                        require_entries=True,
+                    )
+                    if not rss_feed:
+                        logging.warning(f"Failed to fetch r/{subreddit}: {error}")
+                        continue
+                    if used_url and used_url != feed_url:
+                        logging.info(f"Using fallback feed URL: {used_url}")
+                    if hasattr(rss_feed, "bozo") and rss_feed.bozo:
+                        logging.warning(
+                            f"Warning: Feed might be malformed: {rss_feed.bozo_exception}"
+                        )
+
+                    added = 0
+                    downloaded = 0
+                    for entry in rss_feed.entries[:25]:
+                        if is_nsfw(entry):
+                            continue
+
+                        image_url = extract_image_url(entry)
+                        if not image_url:
+                            continue
+
+                        # Check for duplicates
+                        with engine.connect() as conn:
+                            result = conn.execute(
+                                text("SELECT id FROM image_posts WHERE url = :url"),
+                                {"url": image_url}
+                            )
+                            if result.fetchone():
+                                continue
+
+                        # Get high-res URL (with rate limiting delay)
+                        source_url = entry.link if hasattr(entry, "link") else None
+                        high_res_url = None
+                        if source_url:
+                            high_res_url = extract_high_res_url(source_url, image_url)
+                            # Small delay between Reddit API requests (1-2s)
+                            time.sleep(1.0 + random.uniform(0, 1))
+
+                        # Insert record to get ID
+                        with engine.begin() as conn:
+                            result = conn.execute(
+                                text("""
+                                    INSERT INTO image_posts (url, source_url, title, subreddit, fetched_on, used, high_res_url)
+                                    VALUES (:url, :source_url, :title, :subreddit, :fetched_on, false, :high_res_url)
+                                    RETURNING id
+                                """),
+                                {
+                                    "url": image_url,
+                                    "source_url": source_url,
+                                    "title": entry.title[:300] if hasattr(entry, "title") else "",
+                                    "subreddit": subreddit,
+                                    "fetched_on": timestamp,
+                                    "high_res_url": high_res_url,
+                                }
+                            )
+                            row = result.fetchone()
+                            image_id = row[0] if row else None
+
+                        if image_id:
+                            added += 1
+
+                            # Download image locally
+                            download_url = high_res_url or image_url
+                            filename = generate_filename(download_url, image_id)
+                            filepath = storage_path / filename
+                            relative_path = f"{IMAGE_STORAGE_DIR}/{filename}"
+
+                            logging.info(f"  Downloading: {download_url[:60]}...")
+                            ok, reason = download_image_checked(download_url, str(filepath))
+                            if ok:
+                                with engine.begin() as conn:
+                                    conn.execute(
+                                        text("UPDATE image_posts SET local_path = :path WHERE id = :id"),
+                                        {"path": relative_path, "id": image_id}
+                                    )
+                                downloaded += 1
+                                logging.info(f"    -> Saved to {relative_path}")
+                            else:
+                                logging.warning(f"    -> Download failed ({reason})")
+                                # If we only got a tiny thumbnail, delete the row so it won't be selected for posts.
+                                if reason == "too_small":
+                                    with engine.begin() as conn:
+                                        conn.execute(
+                                            text("DELETE FROM image_posts WHERE id = :id"),
+                                            {"id": image_id},
+                                        )
+                                    try:
+                                        if filepath.exists():
+                                            filepath.unlink()
+                                    except Exception:
+                                        pass
+
+                    total_added += added
+                    total_downloaded += downloaded
+                    logging.info(f"  Added {added} images from r/{subreddit}, downloaded {downloaded}")
+
+                except Exception as e:
+                    logging.warning(f"Error fetching r/{subreddit}: {e}")
+                    continue
+
+            logging.info(f"Image population complete: {total_added} images added, {total_downloaded} downloaded")
+
+            # Annotate newly populated images with VLM descriptions
+            if total_added > 0:
+                from y_client.news_feeds.image_feed_reader import annotate_pending_images
+                from y_client.classes.annotator import Annotator
+
+                logging.info("Starting image annotation with VLM...")
+                try:
+                    llm_v_url = os.getenv("LLM_URL", "http://127.0.0.1:11434/v1")
+                    annotator = Annotator(config={
+                        "url": llm_v_url,
+                        "api_key": "NULL",
+                        "model": "minicpm-v",
+                        "temperature": 0.5,
+                        "max_tokens": 300,
+                    })
+                    annotated = annotate_pending_images(annotator, batch_size=50, engine=engine)
+                    logging.info(f"Annotated {annotated} images with VLM descriptions")
+                except Exception as e:
+                    logging.error(f"Image annotation failed: {e}")
+
+        except Exception as e:
+            logging.warning(f"Error during image population: {e}")
+            # Don't crash the client if image population fails
 
     def read_agents(self):
         """
@@ -476,7 +654,7 @@ class YClientWeb(object):
 
             self.agents.remove_agent_by_ids(data)
 
-    def add_agent(self, agent=None):
+    def add_agent(self, agent=None, username_type=None):
         """
         Add an agent to the simulation
 
@@ -485,16 +663,37 @@ class YClientWeb(object):
         from y_client.utils import generate_user
 
         if agent is None:
-            try:
-                agent = generate_user(self.config, owner=self.agents_owner)
-
-                if agent is None:
-                    return
-                agent.set_prompts(self.prompts)
-                agent.set_rec_sys(self.content_recsys, self.follow_recsys)
-            except Exception as e:
-                logging.error(f"Error generating agent: {e}", exc_info=True)
-                traceback.print_exc()
+            max_attempts = 8
+            used_names = {a.name for a in self.agents.agents if getattr(a, "name", None)}
+            for attempt in range(max_attempts):
+                try:
+                    agent = generate_user(
+                        self.config,
+                        owner=self.agents_owner,
+                        username_type=username_type,
+                        used_names=used_names,
+                    )
+                    if agent is None:
+                        continue
+                    agent.set_prompts(self.prompts)
+                    agent.set_rec_sys(self.content_recsys, self.follow_recsys)
+                    break
+                except Exception as e:
+                    logging.error(
+                        "Error generating agent (attempt %s/%s): %s",
+                        attempt + 1,
+                        max_attempts,
+                        e,
+                        exc_info=True,
+                    )
+                    traceback.print_exc()
+                    agent = None
+            if agent is None:
+                logging.warning(
+                    "Failed to generate a new agent after %s attempts",
+                    max_attempts,
+                )
+                return
         if agent is not None:
             self.agents.add_agent(agent)
 
@@ -521,7 +720,9 @@ class YClientWeb(object):
                     category=fdef.get("category", ""),
                     leaning=fdef.get("leaning", ""),
                     language=fdef.get("language", "en"),
-                    country=fdef.get("country", "")
+                    country=fdef.get("country", ""),
+                    fetch_images_from_url=fdef.get("fetch_images_from_url", False),
+                    fetch_images_timeout=fdef.get("fetch_images_timeout", 10),
                 )
 
             # Process all feeds manually
@@ -535,7 +736,13 @@ class YClientWeb(object):
             logging.info("====== RSS Feed Processing ======")
             logging.info(f"Processing {len(self.feed.feeds)} feeds...")
 
-            for feed in self.feed.feeds:
+            # Rate limiting for Reddit RSS feeds (~5-7 seconds between requests)
+            for i, feed in enumerate(self.feed.feeds):
+                if i > 0:  # Don't delay before first feed
+                    delay = 5.0 + random.uniform(0, 2)  # 5-7 second jitter
+                    logging.info(f"Rate limiting: waiting {delay:.1f}s before next feed...")
+                    time.sleep(delay)
+
                 initial_article_count = len(feed.news)
                 feed.read_feed()
                 articles_found = len(feed.news) - initial_article_count
