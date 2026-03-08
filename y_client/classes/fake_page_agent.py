@@ -47,7 +47,7 @@ class FakePageAgent(PageAgent):
         self.name = kwargs.get("name")
 
     @log_execution_time
-    def select_action(self, tid, actions, max_length_thread_reading=5):
+    def select_action(self, tid, actions, max_length_thread_reading=10):
         """
         Select and perform the page's action for the current time slot.
         
@@ -112,7 +112,7 @@ class FakePageAgent(PageAgent):
         """
         return
 
-    def reply(self, tid: int, max_length_thread_reading: int = 5):
+    def reply(self, tid: int, max_length_thread_reading: int = 10):
         """
         Reply to a comment (disabled for page agents).
         
@@ -201,7 +201,14 @@ class FakePageAgent(PageAgent):
             str: The evaluated f-string with placeholders replaced by values
         """
         kwargs["self"] = self
-        return eval(f'f"""{non_f_str}"""', kwargs)
+        rendered = eval(f'f"""{non_f_str}"""', kwargs)
+        if isinstance(rendered, str):
+            rendered = (
+                f"{rendered.rstrip()}\n\n"
+                "STYLE RULE: Do not use any dash characters. This includes U+2014 em dash, "
+                "U+2013 en dash, and ASCII minus sign. Use commas, periods, or parentheses instead."
+            )
+        return rendered
 
     def __extract_components(self, text, c_type="hashtags"):
         """
