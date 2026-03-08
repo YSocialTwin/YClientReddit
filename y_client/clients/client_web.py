@@ -22,6 +22,7 @@ base = None
 
 from y_client.classes import Agent, Agents, SimulationSlot
 from y_client.news_feeds import Feeds
+from y_client.news_feeds.client_modals import ImagePosts
 
 
 class YClientWeb(object):
@@ -214,6 +215,11 @@ class YClientWeb(object):
         import datetime
         from sqlalchemy import text
         from y_client.news_feeds.feed_reader import parse_feed_with_retry
+
+        try:
+            ImagePosts.__table__.create(bind=engine, checkfirst=True)
+        except Exception as exc:
+            logging.warning("Could not ensure image_posts table exists: %s", exc)
 
         IMAGE_EXTENSIONS = r"\.(jpg|jpeg|png|gif|webp)(\?.*)?$"
         def is_nsfw(entry) -> bool:
@@ -476,7 +482,15 @@ class YClientWeb(object):
         import y_client.recsys as frecsys
 
         # population filename
-        self.agents_filename = f"{self.base_path}{self.config['simulation']['population']}.json"
+        population_name = str(self.config["simulation"]["population"])
+        population_candidates = [
+            Path(self.base_path) / f"{population_name}.json",
+            Path(self.base_path) / f"{population_name.replace(' ', '')}.json",
+        ]
+        chosen_population = next((path for path in population_candidates if path.exists()), None)
+        if chosen_population is None:
+            chosen_population = population_candidates[1]
+        self.agents_filename = str(chosen_population)
         data = json.load(open(self.agents_filename, "r"))
         skipped_pages = 0
         for ag in data["agents"]:

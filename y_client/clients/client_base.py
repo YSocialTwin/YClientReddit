@@ -6,6 +6,9 @@ import json
 import logging
 import networkx as nx
 from pathlib import Path
+from requests import post, get
+import sqlalchemy as db
+from sqlalchemy import orm, text
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 sys.path.append(os.path.dirname(SCRIPT_DIR))
@@ -14,6 +17,9 @@ from y_client import Agent, Agents, SimulationSlot
 from y_client.recsys import *
 from y_client.utils import generate_user
 from y_client.news_feeds import Feeds, session, Websites, Articles, Images
+
+admin_session = None
+admin_engine = None
 
 
 class YClientBase(object):
@@ -93,6 +99,11 @@ class YClientBase(object):
             self.g = nx.convert_node_labels_to_integers(self.g, first_label=0)
         else:
             self.g = None
+
+        self.pages = []
+        self.experiment_topics = []
+        self._init_admin_db_connection()
+        self.initialize_experiment_topics()
 
     def _load_prompts_with_defaults(self, prompts_filename: str):
         with open(prompts_filename, "r") as f:
@@ -250,17 +261,152 @@ class YClientBase(object):
             response = input("\nError loading URLs. Continue anyway? (y/n): ")
             return response.lower() == 'y'
 
+    def _init_admin_db_connection(self):
+        """
+        Initialize connection to the admin database to fetch experiment topics.
+        """
+        global admin_session, admin_engine
+        try:
+            possible_paths = [
+                "y_social.db",
+                "../y_social.db",
+                "../../y_social.db",
+                "../../../../y_social.db",
+                os.path.join(os.getcwd(), "y_social.db"),
+            ]
+
+            admin_db_path = None
+            for path in possible_paths:
+                abs_path = os.path.abspath(path)
+                if os.path.exists(abs_path):
+                    admin_db_path = abs_path
+                    break
+
+            if admin_db_path:
+                admin_engine = db.create_engine(
+                    f"sqlite:////{admin_db_path}",
+                    connect_args={"check_same_thread": False},
+                )
+                admin_session = orm.scoped_session(orm.sessionmaker())(bind=admin_engine)
+                globals()["admin_session"] = admin_session
+                globals()["admin_engine"] = admin_engine
+
+                try:
+                    admin_session.execute(text("SELECT 1"))
+                except Exception:
+                    admin_session = None
+                    admin_engine = None
+            else:
+                admin_session = None
+                admin_engine = None
+
+        except Exception:
+            admin_session = None
+            admin_engine = None
+
+    def get_experiment_topics(self, experiment_name=None):
+        """
+        Fetch experiment topics from the admin database.
+        """
+        global admin_session
+
+        if admin_session is None:
+            return []
+
+        try:
+            if experiment_name is None:
+                experiment_name = self.config.get("simulation", {}).get("name", "")
+
+            query = """
+            SELECT tl.name
+            FROM topic_list tl
+            JOIN exp_topic et ON tl.id = et.topic_id
+            JOIN exps e ON et.exp_id = e.idexp
+            WHERE e.exp_name = :experiment_name
+            """
+
+            result = admin_session.execute(
+                text(query), {"experiment_name": experiment_name}
+            )
+            return [row[0] for row in result.fetchall()]
+        except Exception:
+            return []
+
+    def initialize_experiment_topics(self):
+        """
+        Initialize experiment topics from the admin database.
+        """
+        topics = self.get_experiment_topics()
+        if not topics:
+            topics = self.config.get("agents", {}).get("interests", [])
+
+        if not topics:
+            return False
+
+        self.experiment_topics = topics
+        return True
+
+    def sample_agent_interests(self):
+        """
+        Sample interests for a new agent from the active experiment topic pool.
+        """
+        if not self.experiment_topics:
+            return []
+
+        try:
+            min_interests = self.config.get("agents", {}).get("n_interests", {}).get("min", 1)
+            max_interests = self.config.get("agents", {}).get("n_interests", {}).get("max", 3)
+            max_interests = min(max_interests, len(self.experiment_topics))
+            min_interests = min(min_interests, max_interests)
+            n_interests = random.randint(min_interests, max_interests)
+            return random.sample(self.experiment_topics, n_interests)
+        except Exception:
+            return []
+
+    def assign_agent_interests(self, agent):
+        """
+        Assign sampled experiment interests to a newly created agent.
+        """
+        if not hasattr(agent, "user_id") or agent.user_id is None:
+            return
+
+        sampled_interests = self.sample_agent_interests()
+        if not sampled_interests:
+            return
+
+        try:
+            api_url = f"{self.config['servers']['api']}current_time"
+            headers = {"Content-Type": "application/x-www-form-urlencoded"}
+            response = get(f"{api_url}", headers=headers)
+
+            if response.status_code == 200:
+                data = json.loads(response.content.decode("utf-8"))
+                round_id = int(data.get("id", 0))
+            else:
+                round_id = 0
+
+            api_url = f"{self.config['servers']['api']}set_user_interests"
+            interest_data = {
+                "user_id": agent.user_id,
+                "interests": sampled_interests,
+                "round": round_id,
+            }
+            post(f"{api_url}", headers=headers, data=json.dumps(interest_data))
+        except Exception:
+            return
+
     def set_interests(self):
         """
-        Set the interests of the agents
+        Set the global experiment interests.
         """
+        if not self.experiment_topics:
+            if not self.initialize_experiment_topics():
+                return
+
         api_url = f"{self.config['servers']['api']}set_interests"
 
         headers = {"Content-Type": "application/x-www-form-urlencoded"}
-
-        data = self.config["agents"]["interests"]
-
-        post(f"{api_url}", headers=headers, data=json.dumps(data))
+        post(f"{api_url}", headers=headers, data=json.dumps(self.experiment_topics))
 
     def set_recsys(self, c_recsys, f_recsys):
         """
@@ -306,6 +452,7 @@ class YClientBase(object):
                 return
         if agent is not None:
             self.agents.add_agent(agent)
+            self.assign_agent_interests(agent)
 
     def create_initial_population(self):
         """
