@@ -37,14 +37,13 @@ def generate_user(config, owner=None):
     age = fake.random_int(
         min=config["agents"]["age"]["min"], max=config["agents"]["age"]["max"]
     )
-    # interests = fake.random_elements(
-    #     elements=set(config["agents"]["interests"]),
-    #     length=fake.random_int(
-    #         min=config["agents"]["n_interests"]["min"],
-    #         max=config["agents"]["n_interests"]["max"],
-    #     ),
-    # )
-    interests = []
+    interests = fake.random_elements(
+        elements=set(config["agents"]["interests"]),
+        length=fake.random_int(
+            min=config["agents"]["n_interests"]["min"],
+            max=config["agents"]["n_interests"]["max"],
+        ),
+    )
 
     toxicity = fake.random_element(elements=(config["agents"]["toxicity_levels"]))
 
@@ -82,8 +81,7 @@ def generate_user(config, owner=None):
         age=age,
         ag_type=ag_type,
         leaning=political_leaning,
-        # interests=list(interests),
-        interests=interests,
+        interests=list(interests),
         config=config,
         big_five=big_five,
         language=language,

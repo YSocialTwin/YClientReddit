@@ -4,7 +4,7 @@ import os
 import shutil
 import logging
 import traceback
-import random
+import datetime
 from sqlalchemy.ext.declarative import declarative_base
 import sqlalchemy as db
 from requests import post
@@ -18,6 +18,10 @@ session = None
 engine = None
 base = None
 
+from y_client.classes import Agent, Agents, SimulationSlot
+from y_client.news_feeds import Feeds
+from y_client.news_feeds.client_modals import ImagePosts
+
 
 class YClientWeb(object):
     def __init__(
@@ -29,6 +33,8 @@ class YClientWeb(object):
         owner="admin",
         first_run=False,
         network=None,
+        log_file="agent_execution.log",
+        llm=True,
     ):
         """
         Initialize the YClient object
@@ -40,9 +46,16 @@ class YClientWeb(object):
         :param agents_output: the file to save the generated agents in JSON format
         :param owner: the owner of the simulation
         :param first_run: if it is the first run of the simulation
+        :param log_file: path to the log file for agent execution time tracking
+        :param llm: whether to use LLM for agent behaviors
         """
+        from y_client.logger import set_logger
+
+        # Configure the logger with the specified log file
+        set_logger(log_file)
 
         self.first_run = first_run
+        self.llm = llm
         self.base_path = data_base_path
         self.config = config_file
 
@@ -81,41 +94,49 @@ class YClientWeb(object):
 
         ##############
         BASE_DIR = os.path.dirname(os.path.abspath(__file__)).split("y_client")[0]
-        
-        # Use the Y_Web experiment database instead of creating our own
-        if data_base_path and os.path.exists(f"{data_base_path}database_server.db"):
-            # Use the Y_Web experiment database
+
+        database_url = os.environ.get("DATABASE_URL")
+        if database_url and "postgresql" in database_url:
+            db_uri = database_url
+            logging.info(f"Using PostgreSQL database: {db_uri}")
+        elif data_base_path and os.path.exists(f"{data_base_path}database_server.db"):
             db_path = f"{data_base_path}database_server.db"
+            db_uri = f"sqlite:////{db_path}"
             logging.info(f"Using Y_Web experiment database: {db_path}")
         else:
-            # Fallback to standalone database (for backwards compatibility)
             db_path = f"{BASE_DIR}experiments/{self.config['simulation']['name']}.db"
             if not os.path.exists(db_path):
-                # copy the clean database to the experiments folder
                 shutil.copyfile(
                     f"{BASE_DIR}data_schema/database_clean_client.db",
                     db_path,
                 )
+            db_uri = f"sqlite:////{db_path}"
             logging.info(f"Using standalone database: {db_path}")
 
         global session, engine, base
         base = declarative_base()
 
-        engine = db.create_engine(f"sqlite:////{db_path}")
+        if "postgresql" in db_uri:
+            from sqlalchemy.pool import NullPool
+
+            engine = db.create_engine(db_uri, poolclass=NullPool)
+        else:
+            engine = db.create_engine(
+                db_uri,
+                connect_args={"check_same_thread": False, "timeout": 30},
+            )
         base.metadata.bind = engine
         session = orm.scoped_session(orm.sessionmaker())(bind=engine)
 
         globals()["session"] = session
         globals()["engine"] = engine
         globals()["base"] = base
-        
         ##############
+
+        self._ensure_image_posts_populated(data_base_path)
 
         yclient_path = os.path.dirname(os.path.abspath(__file__)).split("y_web")[0]
         sys.path.append(f'{yclient_path}{os.sep}external{os.sep}YClient/')
-
-        from y_client.classes import Agent, Agents, SimulationSlot
-        from y_client.news_feeds import Feeds
 
         # initialize simulation clock
         self.sim_clock = SimulationSlot(self.config)
@@ -125,7 +146,147 @@ class YClientWeb(object):
         self.content_recsys = None
         self.follow_recsys = None
         self.network = network
-        self.pages = []
+        self.pages = []  # Reddit doesn't have page agents, all are regular users
+
+    def _ensure_image_posts_populated(self, data_base_path):
+        """Populate the standalone image pool from image_feeds.json when present."""
+        import feedparser
+        import re
+        from sqlalchemy import text
+
+        image_feeds_path = os.path.join(data_base_path, "image_feeds.json")
+        if not os.path.exists(image_feeds_path):
+            return
+
+        create_table_sql = """
+            CREATE TABLE IF NOT EXISTS image_posts (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                url VARCHAR(500) NOT NULL,
+                source_url VARCHAR(500),
+                title VARCHAR(300),
+                subreddit VARCHAR(100),
+                description TEXT,
+                fetched_on VARCHAR(20),
+                used BOOLEAN DEFAULT 0
+            )
+        """
+        if engine.dialect.name == "postgresql":
+            create_table_sql = """
+                CREATE TABLE IF NOT EXISTS image_posts (
+                    id SERIAL PRIMARY KEY,
+                    url VARCHAR(500) NOT NULL,
+                    source_url VARCHAR(500),
+                    title VARCHAR(300),
+                    subreddit VARCHAR(100),
+                    description TEXT,
+                    fetched_on VARCHAR(20),
+                    used BOOLEAN DEFAULT FALSE
+                )
+            """
+
+        with engine.begin() as conn:
+            conn.execute(text(create_table_sql))
+            existing_count = conn.execute(text("SELECT COUNT(*) FROM image_posts")).scalar()
+            if existing_count and int(existing_count) > 0:
+                return
+
+        try:
+            with open(image_feeds_path, "r") as f:
+                feeds = json.load(f)
+        except Exception as exc:
+            logging.warning("Could not read image feeds from %s: %s", image_feeds_path, exc)
+            return
+
+        image_pattern = re.compile(r"\.(jpg|jpeg|png|gif|webp)(\?.*)?$", re.IGNORECASE)
+        timestamp = datetime.datetime.now().strftime("%Y%m%d")
+
+        def is_nsfw(entry):
+            if hasattr(entry, "over_18") and entry.over_18:
+                return True
+            title = entry.title.lower() if hasattr(entry, "title") else ""
+            return "[nsfw]" in title or "(nsfw)" in title
+
+        def extract_image_url(entry):
+            candidates = []
+
+            if hasattr(entry, "link") and image_pattern.search(entry.link):
+                url = entry.link
+                if "preview.redd.it" not in url and "external-preview" not in url:
+                    url = url.split("?")[0]
+                candidates.append(url)
+
+            if hasattr(entry, "media_content"):
+                for media in entry.media_content:
+                    url = media.get("url", "")
+                    if image_pattern.search(url):
+                        if "preview.redd.it" not in url and "external-preview" not in url:
+                            url = url.split("?")[0]
+                        candidates.append(url)
+
+            if hasattr(entry, "media_thumbnail"):
+                for thumb in entry.media_thumbnail:
+                    url = thumb.get("url", "")
+                    if url:
+                        candidates.append(url)
+
+            if hasattr(entry, "summary"):
+                match = re.search(r'<img[^>]+src="([^"]+)"', entry.summary)
+                if match:
+                    candidates.append(match.group(1).replace("&amp;", "&"))
+
+            if not candidates:
+                return None
+
+            for url in candidates:
+                if "i.redd.it" in url or "imgur.com" in url:
+                    return url
+            for url in candidates:
+                if "preview.redd.it" in url and "?" in url:
+                    return url
+            return candidates[0]
+
+        added = 0
+        with engine.begin() as conn:
+            for item in feeds:
+                if not isinstance(item, dict):
+                    continue
+                subreddit = str(item.get("subreddit", "")).strip().lower()
+                subreddit = subreddit[2:] if subreddit.startswith("r/") else subreddit
+                if not subreddit:
+                    continue
+
+                parsed = feedparser.parse(f"https://www.reddit.com/r/{subreddit}.rss")
+                for entry in parsed.entries[:25]:
+                    if is_nsfw(entry):
+                        continue
+                    image_url = extract_image_url(entry)
+                    if not image_url:
+                        continue
+                    exists = conn.execute(
+                        text("SELECT id FROM image_posts WHERE url = :url"),
+                        {"url": image_url},
+                    ).fetchone()
+                    if exists:
+                        continue
+                    conn.execute(
+                        text(
+                            """
+                            INSERT INTO image_posts (url, source_url, title, subreddit, fetched_on, used)
+                            VALUES (:url, :source_url, :title, :subreddit, :fetched_on, false)
+                            """
+                        ),
+                        {
+                            "url": image_url,
+                            "source_url": getattr(entry, "link", None),
+                            "title": getattr(entry, "title", "")[:300],
+                            "subreddit": subreddit,
+                            "fetched_on": timestamp,
+                        },
+                    )
+                    added += 1
+
+        if added:
+            logging.info("Seeded %s standalone images from %s", added, image_feeds_path)
 
     def read_agents(self):
         """
@@ -133,15 +294,16 @@ class YClientWeb(object):
 
         :return:
         """
-        from y_client.classes import Agent
         import y_client.recsys as recsys
         import y_client.recsys as frecsys
 
         # population filename
-        self.agents_filename = f"{self.base_path}{self.config['simulation']['population'].replace(' ', '')}.json"
+        self.agents_filename = f"{self.base_path}{self.config['simulation']['population']}.json"
         data = json.load(open(self.agents_filename, "r"))
-        for ag in data['agents']:
-            if ag["is_page"] == 0:
+        skipped_pages = 0
+        for ag in data["agents"]:
+            is_page = ag.get("is_page", 0)
+            if is_page != 1:
                 content_recsys = getattr(recsys, ag["rec_sys"])()
                 follow_recsys = getattr(frecsys, ag["frec_sys"])(leaning_bias=1.5)
                 agent = Agent(
@@ -156,25 +318,33 @@ class YClientWeb(object):
                     ex=ag["ex"],
                     ag=ag["ag"],
                     ne=ag["ne"],
-                    education_level=ag["education_level"],
-                    round_actions=ag["round_actions"],
-                    nationality=ag["nationality"],
-                    profession=ag["profession"],
-                    toxicity=ag["toxicity"],
-                    gender=ag["gender"],
-                    age=ag["age"],
+                    education_level=ag.get("education_level", ""),
+                    round_actions=ag.get("round_actions", []),
+                    nationality=ag.get("nationality", ""),
+                    profession=ag.get("profession", ""),
+                    toxicity=ag.get("toxicity", 0),
+                    gender=ag.get("gender", ""),
+                    age=ag.get("age", 0),
                     recsys=content_recsys,
                     frecsys=follow_recsys,
-                    language=ag["language"],
-                    owner=ag["owner"],
+                    language=ag.get("language", "en"),
+                    owner=ag.get("owner", ""),
                     config=self.config,
                     load=not self.first_run,
                     web=True,
-                    prompt=ag["prompts"],
+                    prompt=ag.get("prompts", {}),
+                    daily_activity_level=ag.get("daily_activity_level", 1),
+                    activity_profile=ag.get("activity_profile", "Always On"),
                 )
                 agent.set_prompts(self.prompts)
                 self.agents.add_agent(agent)
-                
+            else:
+                skipped_pages += 1
+        if skipped_pages:
+            logging.info(
+                "Skipped %s legacy page agent definitions; standard agents now handle link sharing.",
+                skipped_pages,
+            )
 
     def add_feeds(self):
         """
@@ -216,9 +386,17 @@ class YClientWeb(object):
             import traceback
             traceback.print_exc()
             # Don't crash the simulation if RSS feeds fail to load
+    def set_interests(self):
+        """
+        Set the interests of the agents
+        """
+        api_url = f"{self.config['servers']['api']}set_interests"
 
+        headers = {"Content-Type": "application/x-www-form-urlencoded"}
 
+        data = self.config["agents"]["interests"]
 
+        post(f"{api_url}", headers=headers, data=json.dumps(data))
 
     def set_recsys(self, c_recsys, f_recsys):
         """
@@ -244,19 +422,36 @@ class YClientWeb(object):
         :param a_file: the JSON file containing the agents
         """
         agents = json.load(open(a_file, "r"))
-        from y_client.classes import Agent
 
+        skipped_pages = 0
         for a in agents["agents"]:
             try:
-                if a["is_page"] == 0:
+                if a.get("is_page", 0) != 1:
                     ag = Agent(
                         name=a["name"], email=a["email"], load=True, config=self.config, web=True
                     )
                     ag.set_prompts(self.prompts)
                     ag.set_rec_sys(self.content_recsys, self.follow_recsys)
                     self.agents.add_agent(ag)
+                else:
+                    skipped_pages += 1
             except Exception:
                 logging.exception(f"Error loading agent: {a['name']}")
+        if skipped_pages:
+            logging.info(
+                "Skipped %s legacy page agents from existing roster; link sharing is handled by regular users.",
+                skipped_pages,
+            )
+
+    def add_network(self):
+        """
+        Add network relationships between agents.
+        Not implemented for Reddit-style simulations - follower relationships
+        are handled differently in forum-style platforms.
+        """
+        logging.info("add_network called but not implemented for Reddit-style simulations")
+        pass
+
     def churn(self, tid):
         """
         Evaluate churn
@@ -281,8 +476,6 @@ class YClientWeb(object):
 
             self.agents.remove_agent_by_ids(data)
 
-
-
     def add_agent(self, agent=None):
         """
         Add an agent to the simulation
@@ -302,7 +495,6 @@ class YClientWeb(object):
             except Exception as e:
                 logging.error(f"Error generating agent: {e}", exc_info=True)
                 traceback.print_exc()
-        
         if agent is not None:
             self.agents.add_agent(agent)
 

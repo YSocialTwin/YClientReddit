@@ -1,17 +1,17 @@
 from y_client.recsys.ContentRecSys import ContentRecSys
 from y_client.recsys.FollowRecSys import FollowRecSys
-from y_client.news_feeds.client_modals import Websites, Images, Articles, session, Agent_Custom_Prompt
+from y_client.news_feeds.client_modals import Websites, Images, Articles, ImagePosts, session, Agent_Custom_Prompt
 from y_client.classes.annotator import Annotator
 from sqlalchemy.sql.expression import func
 from y_client.news_feeds.feed_reader import NewsFeed
 from y_client.classes.time import SimulationSlot
+import logging
 import random
 from requests import get, post
 import json
 from autogen import AssistantAgent
 import numpy as np
 import re
-import logging
 
 __all__ = ["Agent", "Agents"]
 
@@ -42,6 +42,8 @@ class Agent(object):
         toxicity: str = "no",
         api_key: str = "NULL",
         is_page: int = 0,
+        daily_activity_level: int = 1,
+        activity_profile: str = "Always On",
         *args,
         **kwargs,
     ):
@@ -73,11 +75,13 @@ class Agent(object):
 
         if "web" in kwargs:
 
-            self.__web_init(name=name, email=email,pwd=pwd, interests=interests, leaning=leaning,
+            self.__web_init(name=name, email=email, pwd=pwd, interests=interests, leaning=leaning,
                             ag_type=ag_type, load=load, recsys=recsys, age=age,
                             frecsys=frecsys, config=config, big_five=big_five, language=language, owner=owner, education_level=education_level,
-                            joined_on=joined_on, round_actions=round_actions, gender=gender, nationality=nationality, toxicity=toxicity,
-                            api_key=api_key, is_page=is_page, *args, **kwargs)
+                            joined_on=joined_on, round_actions=round_actions, gender=gender, nationality=nationality,
+                            profession=profession, toxicity=toxicity,
+                            api_key=api_key, is_page=is_page, daily_activity_level=daily_activity_level,
+                            activity_profile=activity_profile, *args, **kwargs)
         else:
             self.emotions = config["posts"]["emotions"]
             self.actions_likelihood = config["simulation"]["actions_likelihood"]
@@ -120,6 +124,8 @@ class Agent(object):
                 self.nationality = nationality
                 self.profession = profession
                 self.toxicity = toxicity
+                self.daily_activity_level = daily_activity_level
+                self.activity_profile = activity_profile
 
                 uid = self.__register()
                 if uid is None:
@@ -158,6 +164,9 @@ class Agent(object):
                 self.toxicity = us["toxicity"]
                 self.nationality = us["nationality"]
                 self.is_page = us["is_page"]
+                self.daily_activity_level = us.get("daily_activity_level", 1)
+                self.activity_profile = us.get("activity_profile", "Always On")
+                self.profession = us.get("profession", "")
 
             config_list = {
                 "model": f"{self.type}",
@@ -212,6 +221,7 @@ class Agent(object):
         api_key: str = "NULL",
         is_page: int = 0,
         daily_activity_level: int = 1,
+        activity_profile: str = "Always On",
         *args,
         **kwargs,):
 
@@ -282,9 +292,13 @@ class Agent(object):
             self.nationality = nationality
             self.profession = profession
             self.daily_activity_level = daily_activity_level
+            self.activity_profile = activity_profile
 
             uid = self.__register()
-            self.user_id = uid
+            if uid is None:
+                pass
+            else:
+                self.user_id = uid
 
         else:
             us = json.loads(self.__get_user())
@@ -322,6 +336,7 @@ class Agent(object):
             self.nationality = us["nationality"]
             self.is_page = us["is_page"]
             self.daily_activity_level = us.get("daily_activity_level", 1)
+            self.activity_profile = us.get("activity_profile", "Always On")
             self.profession = us.get("profession", "")
 
         config_list = {
@@ -459,9 +474,9 @@ class Agent(object):
 
         :return: the user
         """
-        #res = json.loads(self._check_credentials())
-        #if res["status"] == 404:
-        #    raise Exception("User not found")
+        res = json.loads(self._check_credentials())
+        if res["status"] == 404:
+            raise Exception("User not found")
         api_url = f"{self.base_url}get_user"
 
         headers = {"Content-Type": "application/x-www-form-urlencoded"}
@@ -517,21 +532,22 @@ class Agent(object):
                 "toxicity": self.toxicity,
                 "joined_on": self.joined_on,
                 "is_page": self.is_page,
-                "daily_activity_level": self.daily_activity_level,
-                "profession": self.profession,
             }
         )
 
         headers = {"Content-Type": "application/x-www-form-urlencoded"}
 
-        api_url = f"{self.base_url}register"
-        response = post(f"{api_url}", headers=headers, data=st)
+        api_url = f"{self.base_url}/register"
+        post(f"{api_url}", headers=headers, data=st)
 
-        us = self.__get_user()
-        res = json.loads(us)
-        uid = int(res["id"])
+        try:
+            res = json.loads(self.__get_user())
+            uid = int(res["id"])
+        except Exception as e:
+            print(f"Agent registration failed for {self.name}: {e}")
+            return None
 
-        api_url = f"{self.base_url}set_user_interests"
+        api_url = f"{self.base_url}/set_user_interests"
         data = {"user_id": uid, "interests": self.interests, "round": self.joined_on}
 
         post(f"{api_url}", headers=headers, data=json.dumps(data))
@@ -619,7 +635,7 @@ class Agent(object):
 
         u2.initiate_chat(
             u1,
-            message=self.__effify(self.prompts["handler_post"], interests=interests),
+            message=self.__effify(self.prompts["handler_post"]),
             silent=True,
             max_round=1,
         )
@@ -737,6 +753,65 @@ class Agent(object):
         api_url = f"{self.base_url}/news"
         res = post(f"{api_url}", headers=headers, data=st)
         return res
+
+    def share_image(self, tid, image_post):
+        """
+        Share a standalone image as a Reddit post.
+        """
+        description = image_post.description or "An image"
+
+        u1 = AssistantAgent(
+            name=f"{self.name}",
+            llm_config=self.llm_config,
+            system_message=self.__effify(self.prompts["agent_roleplay_comments_share"]),
+            max_consecutive_auto_reply=1,
+        )
+
+        u2 = AssistantAgent(
+            name="Handler",
+            llm_config=self.llm_config,
+            system_message=self.__effify(self.prompts["handler_instructions"]),
+            max_consecutive_auto_reply=1,
+        )
+
+        prompt = self.prompts.get("handler_image_post") or self.prompts["handler_post"]
+        u2.initiate_chat(
+            u1,
+            message=self.__effify(prompt, description=description),
+            silent=True,
+            max_round=1,
+        )
+
+        emotion_eval = u2.chat_messages[u1][-1]["content"].lower()
+        emotion_eval = self.__clean_emotion(emotion_eval)
+
+        post_text = u2.chat_messages[u1][-2]["content"]
+        post_text = self.__clean_text(post_text)
+        if len(post_text) < 3:
+            return
+
+        hashtags = self.__extract_components(post_text, c_type="hashtags")
+        mentions = self.__extract_components(post_text, c_type="mentions")
+
+        st = json.dumps(
+            {
+                "user_id": self.user_id,
+                "tweet": post_text.replace('"', ""),
+                "image_url": image_post.url,
+                "image_description": description,
+                "emotions": emotion_eval,
+                "hashtags": hashtags,
+                "mentions": mentions,
+                "tid": tid,
+            }
+        )
+
+        u1.reset()
+        u2.reset()
+
+        headers = {"Content-Type": "application/x-www-form-urlencoded"}
+        api_url = f"{self.base_url}/image_post"
+        return post(f"{api_url}", headers=headers, data=st)
 
     def __get_thread(self, post_id: int, max_tweets=None):
         """
@@ -1431,9 +1506,13 @@ class Agent(object):
                 pass
 
         elif "IMAGE" in text.split():
-            image, article_id = self.select_image(tid=tid)
-            if image is not None:
-                self.comment_image(image, tid=tid, article_id=article_id)
+            image_post = self.select_standalone_image()
+            if image_post is not None:
+                self.share_image(tid=tid, image_post=image_post)
+            else:
+                image, article_id = self.select_image(tid=tid)
+                if image is not None:
+                    self.comment_image(image, tid=tid, article_id=article_id)
 
         return
 
@@ -1447,12 +1526,11 @@ class Agent(object):
         """
         selected_post = json.loads(self.read_mentions())
         if "status" not in selected_post:
-            if len(selected_post) > 0:
-                self.comment(
-                    int(selected_post['post_id']),
-                    max_length_threads=max_length_thread_reading,
-                    tid=tid,
-                )
+            self.comment(
+                int(selected_post[0]),
+                max_length_threads=max_length_thread_reading,
+                tid=tid,
+            )
         return
 
     def read(self, article=False):
@@ -1563,6 +1641,7 @@ class Agent(object):
             current_session = session
             
         if current_session is None:
+            import logging
             logging.error("Database session is None in select_link! Cannot query articles.")
             return "", ""
 
@@ -1626,6 +1705,7 @@ class Agent(object):
                     news_obj.image_url = image.url
             except Exception as e:
                 # Handle schema mismatch - Y_Web database doesn't have remote_article_id column
+                import logging
                 logging.warning(f"Could not query images due to schema mismatch: {e}")
                 # Continue without image
 
@@ -1652,6 +1732,7 @@ class Agent(object):
                 news_obj.image_url = image.url
         except Exception as e:
             # Handle schema mismatch - Y_Web database doesn't have remote_article_id column
+            import logging
             logging.warning(f"Could not query images due to schema mismatch: {e}")
             # Continue without image
 
@@ -1784,6 +1865,60 @@ class Agent(object):
                     session.commit()
 
                     return image, image.remote_article_id
+
+    def _annotate_standalone_image(self, image_post):
+        if image_post is None or image_post.description:
+            return image_post
+        try:
+            an = Annotator(config=self.llm_v_config)
+            description = an.annotate(image_post.url)
+            if not description:
+                return None
+            image_post.description = description
+            session.commit()
+            return image_post
+        except Exception as exc:
+            logging.warning(
+                "Could not annotate standalone image %s: %s",
+                getattr(image_post, "id", None),
+                exc,
+            )
+            try:
+                session.rollback()
+            except Exception:
+                pass
+            return None
+
+    def select_standalone_image(self):
+        """
+        Select an unused standalone image from the image_posts table.
+        """
+        try:
+            from y_client.clients.client_web import session as global_session
+
+            current_session = global_session or session
+        except ImportError:
+            current_session = session
+
+        if current_session is None:
+            return None
+
+        image_post = (
+            current_session.query(ImagePosts)
+            .filter(ImagePosts.used == False)
+            .order_by(func.random())
+            .first()
+        )
+        if image_post is None:
+            return None
+
+        image_post = self._annotate_standalone_image(image_post)
+        if image_post is None:
+            return None
+
+        image_post.used = True
+        current_session.commit()
+        return image_post
 
     def comment_image(self, image: object, tid: int, article_id: int = None):
         """
