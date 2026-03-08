@@ -22,6 +22,7 @@ base = None
 
 from y_client.classes import Agent, Agents, SimulationSlot
 from y_client.news_feeds import Feeds
+from y_client.news_feeds.client_modals import ImagePosts
 
 
 class YClientWeb(object):
@@ -214,6 +215,11 @@ class YClientWeb(object):
         import datetime
         from sqlalchemy import text
         from y_client.news_feeds.feed_reader import parse_feed_with_retry
+
+        try:
+            ImagePosts.__table__.create(bind=engine, checkfirst=True)
+        except Exception as exc:
+            logging.warning("Could not ensure image_posts table exists: %s", exc)
 
         IMAGE_EXTENSIONS = r"\.(jpg|jpeg|png|gif|webp)(\?.*)?$"
         def is_nsfw(entry) -> bool:

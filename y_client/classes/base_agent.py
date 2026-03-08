@@ -6442,6 +6442,8 @@ class Agent(object):
                 "toxicity": self.toxicity,
                 "joined_on": self.joined_on,
                 "is_page": self.is_page,
+                "daily_activity_level": self.daily_activity_level,
+                "profession": self.profession,
             }
         )
 
@@ -7015,115 +7017,152 @@ class Agent(object):
         :return: the response from the service
         """
         fresh_config = self._get_llm_config_for_write_action()
+        released = False
 
-        # Get the image description (agents see this as native YSocial content)
-        description = image_post.description or "An image"
+        try:
+            from y_client.clients.client_web import session as global_session
 
-        u1 = AssistantAgent(
-            name=f"{self.name}",
-            llm_config=fresh_config,
-            system_message=self.__effify(self.prompts["agent_roleplay_comments_share"]),
-            max_consecutive_auto_reply=1,
-        )
+            image_session = global_session or session
+        except ImportError:
+            image_session = session
 
-        u2 = AssistantAgent(
-            name=f"Handler",
-            llm_config=fresh_config,
-            system_message=self.__effify(self.prompts["handler_instructions"]),
-            max_consecutive_auto_reply=1,
-        )
+        def _release_image():
+            nonlocal released
+            if released or image_post is None or image_session is None:
+                return
+            try:
+                image_post.used = False
+                image_session.commit()
+            except Exception:
+                try:
+                    image_session.rollback()
+                except Exception:
+                    pass
+            released = True
 
-        # Use image post prompt - no Reddit attribution, just the description
-        image_prompt = self.__effify(
-            self.prompts["handler_image_post"], description=description
-        )
-        u2.initiate_chat(
-            u1,
-            message=image_prompt,
-            silent=True,
-            max_turns=1,
-        )
+        try:
+            description = image_post.description or "An image"
 
-        emotion_raw = self._extract_emotion_chat_content(u2, u1)
-        emotion_eval = self.__clean_emotion(emotion_raw)
-
-        post_text = self._extract_generated_chat_content(
-            u2, u1, prompt_hint=image_prompt, skip_emotion_like=True
-        )
-        post_text = self.__clean_text(post_text)
-
-        # Check for duplicate post before proceeding
-        if self._is_recent_duplicate(post_text):
-            logging.info(f"[{self.name}] Skipping duplicate image post: '{post_text[:50]}...'")
-            return None
-
-        # Guardrail: Check if caption leaks the VLM description
-        if self._caption_leaks_description(post_text, description):
-            logging.info(f"[{self.name}] Caption leak detected, regenerating...")
-            # Reset and retry with stricter prompt
-            u1.reset()
-            u2.reset()
-
-            retry_prompt = (
-                "WRITE A NEW CAPTION. Your previous attempt described the image "
-                "instead of reacting to it emotionally. Write a SHORT reaction "
-                "(not a description). DO NOT say what's in the image. "
-                "Just react emotionally in 1 sentence, max 10 words. "
-                "Examples: 'mood', 'me rn', 'this hits different', 'absolute legend'.\n\n"
-                f"Previous bad attempt: {post_text}"
+            u1 = AssistantAgent(
+                name=f"{self.name}",
+                llm_config=fresh_config,
+                system_message=self.__effify(self.prompts["agent_roleplay_comments_share"]),
+                max_consecutive_auto_reply=1,
             )
 
+            u2 = AssistantAgent(
+                name=f"Handler",
+                llm_config=fresh_config,
+                system_message=self.__effify(self.prompts["handler_instructions"]),
+                max_consecutive_auto_reply=1,
+            )
+
+            image_prompt = self.__effify(
+                self.prompts["handler_image_post"], description=description
+            )
             u2.initiate_chat(
                 u1,
-                message=retry_prompt,
+                message=image_prompt,
                 silent=True,
                 max_turns=1,
             )
 
+            emotion_raw = self._extract_emotion_chat_content(u2, u1)
+            emotion_eval = self.__clean_emotion(emotion_raw)
+
             post_text = self._extract_generated_chat_content(
-                u2, u1, prompt_hint=retry_prompt, skip_emotion_like=True
+                u2, u1, prompt_hint=image_prompt, skip_emotion_like=True
             )
             post_text = self.__clean_text(post_text)
-
-            # Check again for duplicate after retry
-            if self._is_recent_duplicate(post_text):
-                logging.info(f"[{self.name}] Skipping duplicate image post after retry: '{post_text[:50]}...'")
+            if len(post_text) < 3:
+                _release_image()
                 return None
 
-        # Extract hashtags and mentions
-        hashtags = self.__extract_components(post_text, c_type="hashtags")
-        mentions = self.__extract_components(post_text, c_type="mentions")
+            if self._is_recent_duplicate(post_text):
+                logging.info(
+                    f"[{self.name}] Skipping duplicate image post: '{post_text[:50]}...'"
+                )
+                _release_image()
+                return None
 
-        # Create payload for the server
-        st = json.dumps(
-            {
-                "user_id": self.user_id,
-                "tweet": post_text.replace('"', ""),
-                "image_url": image_post.url,
-                "image_description": description,
-                "emotions": emotion_eval,
-                "hashtags": hashtags,
-                "mentions": mentions,
-                "tid": tid,
-            }
-        )
+            if self._caption_leaks_description(post_text, description):
+                logging.info(f"[{self.name}] Caption leak detected, regenerating...")
+                u1.reset()
+                u2.reset()
 
-        u1.reset()
-        u2.reset()
+                retry_prompt = (
+                    "WRITE A NEW CAPTION. Your previous attempt described the image "
+                    "instead of reacting to it emotionally. Write a SHORT reaction "
+                    "(not a description). DO NOT say what's in the image. "
+                    "Just react emotionally in 1 sentence, max 10 words. "
+                    "Examples: 'mood', 'me rn', 'this hits different', 'absolute legend'.\n\n"
+                    f"Previous bad attempt: {post_text}"
+                )
 
-        headers = {"Content-Type": "application/x-www-form-urlencoded"}
+                u2.initiate_chat(
+                    u1,
+                    message=retry_prompt,
+                    silent=True,
+                    max_turns=1,
+                )
 
-        # Use /image_post endpoint for standalone images
-        api_url = f"{self.base_url}/image_post"
-        res = post(f"{api_url}", headers=headers, data=st)
-        self._record_writing_action()
+                post_text = self._extract_generated_chat_content(
+                    u2, u1, prompt_hint=retry_prompt, skip_emotion_like=True
+                )
+                post_text = self.__clean_text(post_text)
+                if len(post_text) < 3 or self._caption_leaks_description(
+                    post_text, description
+                ):
+                    _release_image()
+                    return None
+                if self._is_recent_duplicate(post_text):
+                    logging.info(
+                        f"[{self.name}] Skipping duplicate image post after retry: '{post_text[:50]}...'"
+                    )
+                    _release_image()
+                    return None
 
-        # Note: image_post.used is now set in select_standalone_image() to prevent race conditions
+            hashtags = self.__extract_components(post_text, c_type="hashtags")
+            mentions = self.__extract_components(post_text, c_type="mentions")
 
-        # Record the post for duplicate detection
-        self.__record_post(post_text)
+            st = json.dumps(
+                {
+                    "user_id": self.user_id,
+                    "tweet": post_text.replace('"', ""),
+                    "image_url": image_post.url,
+                    "image_description": description,
+                    "emotions": emotion_eval,
+                    "hashtags": hashtags,
+                    "mentions": mentions,
+                    "tid": tid,
+                }
+            )
 
-        return res
+            u1.reset()
+            u2.reset()
+
+            headers = {"Content-Type": "application/x-www-form-urlencoded"}
+            api_url = f"{self.base_url}/image_post"
+            response = post(f"{api_url}", headers=headers, data=st)
+
+            success = response.status_code == 200
+            if success:
+                try:
+                    payload = json.loads(response.__dict__["_content"].decode("utf-8"))
+                    success = payload.get("status") == 200
+                except Exception:
+                    success = True
+            if not success:
+                _release_image()
+                return response
+
+            self._record_writing_action()
+            self.__record_post(post_text)
+            return response
+        except Exception:
+            _release_image()
+            logging.exception("Standalone image share failed for %s", self.name)
+            return None
 
     def _annotate_image_if_needed(self, image, current_session):
         """
@@ -7204,6 +7243,23 @@ class Agent(object):
                 pass
             return selected_image
 
+        def _reserve_image(selected_image, selection_mode: str, fallback_reason: str = ""):
+            if selected_image is None:
+                return _log_and_return(None, selection_mode, fallback_reason)
+            selected_image.used = True
+            try:
+                current_session.commit()
+            except Exception as exc:
+                logging.warning(
+                    "[%s] Could not reserve image %s: %s",
+                    self.name,
+                    getattr(selected_image, "id", None),
+                    exc,
+                )
+                current_session.rollback()
+                return _log_and_return(None, "error", "image_reservation_failed")
+            return _log_and_return(selected_image, selection_mode, fallback_reason)
+
         # Get the session from global scope (same pattern as select_link)
         try:
             from y_client.clients.client_web import session as global_session
@@ -7267,10 +7323,7 @@ class Agent(object):
             )
             if candidates:
                 image = random.choice(candidates)
-                # Mark as used immediately to prevent race conditions
-                image.used = True
-                current_session.commit()
-                return _log_and_return(image, "interest_match_with_description")
+                return _reserve_image(image, "interest_match_with_description")
 
             # Second try: images without descriptions (will annotate on-demand)
             query = current_session.query(ImagePosts).filter(
@@ -7286,10 +7339,7 @@ class Agent(object):
             for image in candidates:
                 annotated = self._annotate_image_if_needed(image, current_session)
                 if annotated:
-                    # Mark as used immediately to prevent race conditions
-                    annotated.used = True
-                    current_session.commit()
-                    return _log_and_return(annotated, "interest_match_needs_annotation")
+                    return _reserve_image(annotated, "interest_match_needs_annotation")
             # Annotation failed for shortlist, continue to fallback
 
         # Fallback: any unused image with description (not already posted by this agent)
@@ -7303,10 +7353,7 @@ class Agent(object):
         candidates_for_log.extend([_image_to_log(img, "fallback_with_description") for img in candidates])
         if candidates:
             image = random.choice(candidates)
-            # Mark as used immediately to prevent race conditions
-            image.used = True
-            current_session.commit()
-            return _log_and_return(image, "fallback_with_description")
+            return _reserve_image(image, "fallback_with_description")
 
         # Final fallback: any unused image without description (will annotate on-demand)
         query = current_session.query(ImagePosts).filter(
@@ -7319,10 +7366,7 @@ class Agent(object):
         for image in candidates:
             annotated = self._annotate_image_if_needed(image, current_session)
             if annotated:
-                # Mark as used immediately to prevent race conditions
-                annotated.used = True
-                current_session.commit()
-                return _log_and_return(annotated, "fallback_needs_annotation")
+                return _reserve_image(annotated, "fallback_needs_annotation")
 
         # No unused images with descriptions available
         return _log_and_return(None, "none_available", "no_candidate_image")
