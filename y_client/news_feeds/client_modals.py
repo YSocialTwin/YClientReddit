@@ -1,4 +1,4 @@
-from sqlalchemy import orm
+from sqlalchemy import orm, text
 from sqlalchemy.ext.declarative import declarative_base
 import sqlalchemy as db
 import os
@@ -48,6 +48,7 @@ try:
             session = None
 except Exception:
     from y_client.clients.client_web import base, session
+    engine = getattr(session, "bind", None) if session is not None else None
     pass
 
 
@@ -104,3 +105,63 @@ class Agent_Custom_Prompt(base):
     id = db.Column(db.Integer, primary_key=True)
     agent_name = db.Column(db.TEXT, nullable=False)
     prompt = db.Column(db.TEXT, nullable=False)
+
+
+def _ensure_sqlite_schema_compatibility():
+    if engine is None or engine.dialect.name != "sqlite":
+        return
+
+    try:
+        with engine.begin() as conn:
+            conn.execute(
+                text(
+                    """
+                    CREATE TABLE IF NOT EXISTS image_posts (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        url VARCHAR(500) NOT NULL,
+                        source_url VARCHAR(500),
+                        title VARCHAR(300),
+                        subreddit VARCHAR(100),
+                        description TEXT,
+                        fetched_on VARCHAR(20),
+                        used BOOLEAN DEFAULT 0,
+                        local_path VARCHAR(500),
+                        high_res_url VARCHAR(500)
+                    )
+                    """
+                )
+            )
+
+            website_columns = {
+                row[1] for row in conn.execute(text("PRAGMA table_info(websites)")).fetchall()
+            }
+            if website_columns:
+                if "fetch_images_from_url" not in website_columns:
+                    conn.execute(
+                        text(
+                            "ALTER TABLE websites ADD COLUMN fetch_images_from_url BOOLEAN DEFAULT 0"
+                        )
+                    )
+                if "fetch_images_timeout" not in website_columns:
+                    conn.execute(
+                        text(
+                            "ALTER TABLE websites ADD COLUMN fetch_images_timeout INTEGER DEFAULT 10"
+                        )
+                    )
+
+            image_post_columns = {
+                row[1] for row in conn.execute(text("PRAGMA table_info(image_posts)")).fetchall()
+            }
+            if "local_path" not in image_post_columns:
+                conn.execute(
+                    text("ALTER TABLE image_posts ADD COLUMN local_path VARCHAR(500)")
+                )
+            if "high_res_url" not in image_post_columns:
+                conn.execute(
+                    text("ALTER TABLE image_posts ADD COLUMN high_res_url VARCHAR(500)")
+                )
+    except Exception:
+        pass
+
+
+_ensure_sqlite_schema_compatibility()

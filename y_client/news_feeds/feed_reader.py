@@ -951,23 +951,28 @@ class NewsFeed(object):
                             stats["reddit_only_skipped"] += 1
                             continue
 
-                    # For external URLs (not Reddit), fetch metadata
-                    # Priority: Video metadata > OpenGraph metadata (includes first img fallback)
+                    # For external URLs (not Reddit), optionally fetch article metadata.
+                    # Some sites disable article-page crawling and should rely on RSS data only.
                     if is_external_url(entry_link):
                         metadata = None
 
-                        # First, check if it's a video URL (YouTube, Vimeo, etc.)
-                        if is_video_url(entry_link):
-                            metadata = extract_video_metadata(entry_link, timeout=self.fetch_images_timeout)
-                            if metadata:
-                                content_type = 'video'
-                                print(f"  [VIDEO] Fetched metadata for: {entry_link[:60]}...")
+                        if self.fetch_images_from_url:
+                            # First, check if it's a video URL (YouTube, Vimeo, etc.)
+                            if is_video_url(entry_link):
+                                metadata = extract_video_metadata(
+                                    entry_link, timeout=self.fetch_images_timeout
+                                )
+                                if metadata:
+                                    content_type = 'video'
+                                    print(f"  [VIDEO] Fetched metadata for: {entry_link[:60]}...")
 
-                        # If not a video or video fetch failed, try OG metadata
-                        if not metadata:
-                            metadata = extract_og_metadata(entry_link, timeout=self.fetch_images_timeout)
-                            if metadata:
-                                print(f"  [OG] Fetched metadata for: {entry_link[:60]}...")
+                            # If not a video or video fetch failed, try OG metadata
+                            if not metadata:
+                                metadata = extract_og_metadata(
+                                    entry_link, timeout=self.fetch_images_timeout
+                                )
+                                if metadata:
+                                    print(f"  [OG] Fetched metadata for: {entry_link[:60]}...")
 
                         if metadata:
                             # Use fetched metadata instead of RSS entry data
