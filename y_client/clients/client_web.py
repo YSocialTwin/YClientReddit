@@ -5,6 +5,7 @@ import shutil
 import logging
 import traceback
 import datetime
+from pathlib import Path
 from sqlalchemy.ext.declarative import declarative_base
 import sqlalchemy as db
 from requests import post
@@ -154,10 +155,6 @@ class YClientWeb(object):
         import re
         from sqlalchemy import text
 
-        image_feeds_path = os.path.join(data_base_path, "image_feeds.json")
-        if not os.path.exists(image_feeds_path):
-            return
-
         create_table_sql = """
             CREATE TABLE IF NOT EXISTS image_posts (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -189,6 +186,11 @@ class YClientWeb(object):
             existing_count = conn.execute(text("SELECT COUNT(*) FROM image_posts")).scalar()
             if existing_count and int(existing_count) > 0:
                 return
+
+        image_feeds_path = os.path.join(data_base_path, "image_feeds.json")
+        if not os.path.exists(image_feeds_path):
+            logging.info("No image_feeds.json found, leaving image_posts empty")
+            return
 
         try:
             with open(image_feeds_path, "r") as f:
@@ -298,7 +300,15 @@ class YClientWeb(object):
         import y_client.recsys as frecsys
 
         # population filename
-        self.agents_filename = f"{self.base_path}{self.config['simulation']['population']}.json"
+        population_name = str(self.config["simulation"]["population"])
+        population_candidates = [
+            Path(self.base_path) / f"{population_name}.json",
+            Path(self.base_path) / f"{population_name.replace(' ', '')}.json",
+        ]
+        chosen_population = next((path for path in population_candidates if path.exists()), None)
+        if chosen_population is None:
+            chosen_population = population_candidates[1]
+        self.agents_filename = str(chosen_population)
         data = json.load(open(self.agents_filename, "r"))
         skipped_pages = 0
         for ag in data["agents"]:

@@ -532,6 +532,8 @@ class Agent(object):
                 "toxicity": self.toxicity,
                 "joined_on": self.joined_on,
                 "is_page": self.is_page,
+                "daily_activity_level": self.daily_activity_level,
+                "profession": self.profession,
             }
         )
 
@@ -758,60 +760,91 @@ class Agent(object):
         """
         Share a standalone image as a Reddit post.
         """
-        description = image_post.description or "An image"
+        released = False
 
-        u1 = AssistantAgent(
-            name=f"{self.name}",
-            llm_config=self.llm_config,
-            system_message=self.__effify(self.prompts["agent_roleplay_comments_share"]),
-            max_consecutive_auto_reply=1,
-        )
+        def _release_image():
+            nonlocal released
+            if released or image_post is None:
+                return
+            try:
+                image_post.used = False
+                session.commit()
+            except Exception:
+                try:
+                    session.rollback()
+                except Exception:
+                    pass
+            released = True
 
-        u2 = AssistantAgent(
-            name="Handler",
-            llm_config=self.llm_config,
-            system_message=self.__effify(self.prompts["handler_instructions"]),
-            max_consecutive_auto_reply=1,
-        )
+        try:
+            description = image_post.description or "An image"
 
-        prompt = self.prompts.get("handler_image_post") or self.prompts["handler_post"]
-        u2.initiate_chat(
-            u1,
-            message=self.__effify(prompt, description=description),
-            silent=True,
-            max_round=1,
-        )
+            u1 = AssistantAgent(
+                name=f"{self.name}",
+                llm_config=self.llm_config,
+                system_message=self.__effify(self.prompts["agent_roleplay_comments_share"]),
+                max_consecutive_auto_reply=1,
+            )
 
-        emotion_eval = u2.chat_messages[u1][-1]["content"].lower()
-        emotion_eval = self.__clean_emotion(emotion_eval)
+            u2 = AssistantAgent(
+                name="Handler",
+                llm_config=self.llm_config,
+                system_message=self.__effify(self.prompts["handler_instructions"]),
+                max_consecutive_auto_reply=1,
+            )
 
-        post_text = u2.chat_messages[u1][-2]["content"]
-        post_text = self.__clean_text(post_text)
-        if len(post_text) < 3:
-            return
+            prompt = self.prompts.get("handler_image_post") or self.prompts["handler_post"]
+            u2.initiate_chat(
+                u1,
+                message=self.__effify(prompt, description=description),
+                silent=True,
+                max_round=1,
+            )
 
-        hashtags = self.__extract_components(post_text, c_type="hashtags")
-        mentions = self.__extract_components(post_text, c_type="mentions")
+            emotion_eval = u2.chat_messages[u1][-1]["content"].lower()
+            emotion_eval = self.__clean_emotion(emotion_eval)
 
-        st = json.dumps(
-            {
-                "user_id": self.user_id,
-                "tweet": post_text.replace('"', ""),
-                "image_url": image_post.url,
-                "image_description": description,
-                "emotions": emotion_eval,
-                "hashtags": hashtags,
-                "mentions": mentions,
-                "tid": tid,
-            }
-        )
+            post_text = u2.chat_messages[u1][-2]["content"]
+            post_text = self.__clean_text(post_text)
+            if len(post_text) < 3:
+                _release_image()
+                return
 
-        u1.reset()
-        u2.reset()
+            hashtags = self.__extract_components(post_text, c_type="hashtags")
+            mentions = self.__extract_components(post_text, c_type="mentions")
 
-        headers = {"Content-Type": "application/x-www-form-urlencoded"}
-        api_url = f"{self.base_url}/image_post"
-        return post(f"{api_url}", headers=headers, data=st)
+            st = json.dumps(
+                {
+                    "user_id": self.user_id,
+                    "tweet": post_text.replace('"', ""),
+                    "image_url": image_post.url,
+                    "image_description": description,
+                    "emotions": emotion_eval,
+                    "hashtags": hashtags,
+                    "mentions": mentions,
+                    "tid": tid,
+                }
+            )
+
+            u1.reset()
+            u2.reset()
+
+            headers = {"Content-Type": "application/x-www-form-urlencoded"}
+            api_url = f"{self.base_url}/image_post"
+            response = post(f"{api_url}", headers=headers, data=st)
+            try:
+                payload = json.loads(response.__dict__["_content"].decode("utf-8"))
+                if response.status_code == 200 and payload.get("status") == 200:
+                    return response
+            except Exception:
+                pass
+
+            _release_image()
+            return response
+        except Exception:
+            _release_image()
+            logging.exception("Standalone image share failed for %s", self.name)
+            return None
 
     def __get_thread(self, post_id: int, max_tweets=None):
         """
@@ -1917,7 +1950,14 @@ class Agent(object):
             return None
 
         image_post.used = True
-        current_session.commit()
+        try:
+            current_session.commit()
+        except Exception:
+            try:
+                current_session.rollback()
+            except Exception:
+                pass
+            return None
         return image_post
 
     def comment_image(self, image: object, tid: int, article_id: int = None):
