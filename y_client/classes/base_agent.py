@@ -663,8 +663,6 @@ class Agent(object):
         if isinstance(config, dict):
             agents_cfg = config.get("agents", {}) or {}
 
-        self.memory_enabled = bool(agents_cfg.get("memory_enabled", True))
-
         def _to_int(val, default):
             try:
                 return int(val)
@@ -683,6 +681,15 @@ class Agent(object):
             if isinstance(val, bool):
                 return val
             return str(val).strip().lower() in {"1", "true", "on", "yes"}
+
+        def _normalize_run_id(raw_value):
+            raw_run_id = str(raw_value).strip() if raw_value else uuid.uuid4().hex
+            if len(raw_run_id) > 64:
+                digest = hashlib.sha1(raw_run_id.encode("utf-8")).hexdigest()[:24]
+                raw_run_id = f"run_{digest}"
+            return raw_run_id
+
+        self.memory_enabled = _to_bool(agents_cfg.get("memory_enabled"), True)
 
         self.memory_pair_limit = _to_int(agents_cfg.get("memory_pair_limit"), 5)
         self.memory_prompt_max_chars = _to_int(
@@ -1064,14 +1071,14 @@ class Agent(object):
             return
 
         global _MEMORY_RUN_ID, _MEMORY_RESET_DONE, _MEMORY_LAST_DIGEST_UPDATE_ROUND
+        cfg_run_id = agents_cfg.get("memory_run_id")
+        normalized_cfg_run_id = _normalize_run_id(cfg_run_id) if cfg_run_id else None
+        if normalized_cfg_run_id and normalized_cfg_run_id != _MEMORY_RUN_ID:
+            _MEMORY_RUN_ID = normalized_cfg_run_id
+            _MEMORY_RESET_DONE = False
+            _MEMORY_LAST_DIGEST_UPDATE_ROUND = None
         if _MEMORY_RUN_ID is None:
-            cfg_run_id = agents_cfg.get("memory_run_id")
-            raw_run_id = str(cfg_run_id).strip() if cfg_run_id else uuid.uuid4().hex
-            if len(raw_run_id) > 64:
-                # Memory DB schema stores run_id as varchar(64); keep deterministic fallback.
-                digest = hashlib.sha1(raw_run_id.encode("utf-8")).hexdigest()[:24]
-                raw_run_id = f"run_{digest}"
-            _MEMORY_RUN_ID = raw_run_id
+            _MEMORY_RUN_ID = normalized_cfg_run_id or _normalize_run_id(None)
             _MEMORY_LAST_DIGEST_UPDATE_ROUND = None
 
         self.memory_run_id = _MEMORY_RUN_ID
@@ -1080,9 +1087,14 @@ class Agent(object):
         if not _MEMORY_RESET_DONE:
             try:
                 self._memory_api_post("/memory/reset", {"run_id": self.memory_run_id})
-            except Exception:
-                pass
-            _MEMORY_RESET_DONE = True
+            except Exception as exc:
+                logging.warning(
+                    "Memory reset failed for run %s; will retry on next agent init: %s",
+                    self.memory_run_id,
+                    exc,
+                )
+            else:
+                _MEMORY_RESET_DONE = True
 
     # ------------------------------------------------------------------
     # Structured decision logging (server-side JSON logs).
@@ -1102,7 +1114,16 @@ class Agent(object):
             except Exception:
                 return default
 
-        self.decision_logging_enabled = bool(agents_cfg.get("decision_logging_enabled", True))
+        def _to_bool(val, default):
+            if val is None:
+                return default
+            if isinstance(val, bool):
+                return val
+            return str(val).strip().lower() in {"1", "true", "on", "yes"}
+
+        self.decision_logging_enabled = _to_bool(
+            agents_cfg.get("decision_logging_enabled"), True
+        )
         self.decision_logging_max_chars = _to_int(agents_cfg.get("decision_logging_max_chars"), 900)
         self.decision_logging_endpoint = (
             str(agents_cfg.get("decision_logging_endpoint") or "/log/agent_decision").strip()
