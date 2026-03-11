@@ -15,6 +15,7 @@ Classes:
 """
 
 import json
+import hashlib
 import random
 import re
 
@@ -302,6 +303,13 @@ class FakeAgent(Agent):
                 "hashtags": None,
                 "mentions": None,
                 "tid": tid,
+                "client_action_id": "fakecmt_"
+                + hashlib.sha1(
+                    (
+                        f"{self.user_id}|{tid}|{post_id}|"
+                        + re.sub(r"\s+", " ", post_text.lower()).strip()
+                    ).encode("utf-8")
+                ).hexdigest()[:40],
             }
         )
 
@@ -622,7 +630,7 @@ class FakeAgent(Agent):
         return response.__dict__["_content"].decode("utf-8")
 
     @log_execution_time
-    def select_action(self, tid, actions, max_length_thread_reading=5):
+    def select_action(self, tid, actions, max_length_thread_reading=10):
         """
         Post a message to the service.
 
@@ -703,7 +711,7 @@ class FakeAgent(Agent):
         return
 
     @log_execution_time
-    def reply(self, tid: int, max_length_thread_reading: int = 5):
+    def reply(self, tid: int, max_length_thread_reading: int = 10):
         """
         Reply to a mention.
 
