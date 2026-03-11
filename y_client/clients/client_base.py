@@ -2,14 +2,13 @@ import random
 import tqdm
 import sys
 import os
-import networkx as nx
 import json
 import logging
-import numpy as np
+import networkx as nx
+from pathlib import Path
 from requests import post, get
 import sqlalchemy as db
 from sqlalchemy import orm, text
-from sqlalchemy.ext.declarative import declarative_base
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 sys.path.append(os.path.dirname(SCRIPT_DIR))
@@ -19,7 +18,6 @@ from y_client.recsys import *
 from y_client.utils import generate_user
 from y_client.news_feeds import Feeds, session, Websites, Articles, Images
 
-# Global variables for admin database connection
 admin_session = None
 admin_engine = None
 
@@ -47,7 +45,7 @@ class YClientBase(object):
         if prompts_filename is None:
             raise Exception("Prompts file not found")
 
-        self.prompts = json.load(open(prompts_filename, "r"))
+        self.prompts = self._load_prompts_with_defaults(prompts_filename)
         self.config = json.load(open(config_filename, "r"))
         self.agents_owner = owner
         self.agents_filename = agents_filename
@@ -67,10 +65,16 @@ class YClientBase(object):
             a.upper(): float(v)
             for a, v in self.config["simulation"]["actions_likelihood"].items()
         }
+        # Forum experiments do not allow repost/share of other users' content.
+        if "SHARE" in self.actions_likelihood:
+            self.actions_likelihood["SHARE"] = 0.0
         tot = sum(self.actions_likelihood.values())
-        self.actions_likelihood = {
-            k: v / tot for k, v in self.actions_likelihood.items()
-        }
+        if tot <= 0:
+            self.actions_likelihood = {"NONE": 1.0}
+        else:
+            self.actions_likelihood = {
+                k: v / tot for k, v in self.actions_likelihood.items()
+            }
 
         # users' parameters
         self.fratio = self.config["agents"]["reading_from_follower_ratio"]
@@ -97,13 +101,41 @@ class YClientBase(object):
             self.g = None
 
         self.pages = []
-        self.experiment_topics = []  # Cache for experiment topics
-        
-        # Initialize admin database connection for experiment topics
+        self.experiment_topics = []
         self._init_admin_db_connection()
-        
-        # Initialize experiment topics early
         self.initialize_experiment_topics()
+
+    def _load_prompts_with_defaults(self, prompts_filename: str):
+        with open(prompts_filename, "r") as f:
+            exp_prompts = json.load(f)
+        if not isinstance(exp_prompts, dict):
+            exp_prompts = {}
+
+        default_prompts = {}
+        candidate_defaults = [
+            # Package-local defaults.
+            Path(__file__).resolve().parents[2] / "config_files" / "prompts.json",
+            # YSocial forum defaults (available when running inside the monorepo).
+            # These should override package-local defaults for forum mode.
+            Path(__file__).resolve().parents[4] / "data_schema" / "prompts_forum.json",
+        ]
+        for candidate in candidate_defaults:
+            try:
+                if not candidate.exists():
+                    continue
+                with open(candidate, "r") as f:
+                    loaded = json.load(f)
+                if isinstance(loaded, dict):
+                    default_prompts.update(loaded)
+            except Exception as exc:
+                logging.warning(f"Could not load default prompts from {candidate}: {exc}")
+
+        if not default_prompts:
+            return exp_prompts
+
+        merged = dict(default_prompts)
+        merged.update(exp_prompts)
+        return merged
 
     @staticmethod
     def reset_news_db():
@@ -231,206 +263,149 @@ class YClientBase(object):
 
     def _init_admin_db_connection(self):
         """
-        Initialize connection to the admin database to fetch experiment topics
+        Initialize connection to the admin database to fetch experiment topics.
         """
         global admin_session, admin_engine
         try:
-            # Try to find y_social.db in various locations
             possible_paths = [
-                'y_social.db',
-                '../y_social.db',
-                '../../y_social.db',
-                '../../../../y_social.db',
-                os.path.join(os.getcwd(), 'y_social.db')
+                "y_social.db",
+                "../y_social.db",
+                "../../y_social.db",
+                "../../../../y_social.db",
+                os.path.join(os.getcwd(), "y_social.db"),
             ]
-            
+
             admin_db_path = None
             for path in possible_paths:
                 abs_path = os.path.abspath(path)
                 if os.path.exists(abs_path):
                     admin_db_path = abs_path
                     break
-            
+
             if admin_db_path:
-                admin_engine = db.create_engine(f"sqlite:////{admin_db_path}", 
-                                              connect_args={"check_same_thread": False})
+                admin_engine = db.create_engine(
+                    f"sqlite:////{admin_db_path}",
+                    connect_args={"check_same_thread": False},
+                )
                 admin_session = orm.scoped_session(orm.sessionmaker())(bind=admin_engine)
                 globals()["admin_session"] = admin_session
                 globals()["admin_engine"] = admin_engine
-                print(f"Connected to admin database: {admin_db_path}")
-                
-                # Test the connection
+
                 try:
                     admin_session.execute(text("SELECT 1"))
-                    print("Admin database connection verified")
-                except Exception as test_e:
-                    print(f"Admin database connection test failed: {test_e}")
+                except Exception:
                     admin_session = None
                     admin_engine = None
             else:
-                print(f"Admin database not found in any of these locations: {possible_paths}")
                 admin_session = None
                 admin_engine = None
-                
-        except Exception as e:
-            print(f"Failed to connect to admin database: {e}")
+
+        except Exception:
             admin_session = None
             admin_engine = None
 
     def get_experiment_topics(self, experiment_name=None):
         """
-        Fetch experiment topics from the admin database
-        
-        :param experiment_name: Name of the experiment (defaults to simulation name from config)
-        :return: List of topic names
+        Fetch experiment topics from the admin database.
         """
         global admin_session
-        
+
         if admin_session is None:
-            print("Admin database not connected - cannot fetch experiment topics")
             return []
-            
+
         try:
             if experiment_name is None:
-                experiment_name = self.config.get('simulation', {}).get('name', '')
-            
-            # Query for experiment topics using raw SQL for compatibility
+                experiment_name = self.config.get("simulation", {}).get("name", "")
+
             query = """
-            SELECT tl.name 
+            SELECT tl.name
             FROM topic_list tl
             JOIN exp_topic et ON tl.id = et.topic_id
             JOIN exps e ON et.exp_id = e.idexp
-            WHERE e.exp_name = ?
+            WHERE e.exp_name = :experiment_name
             """
-            
-            result = admin_session.execute(text(query), (experiment_name,))
-            topics = [row[0] for row in result.fetchall()]
-            
-            if topics:
-                print(f"Found {len(topics)} topics for experiment '{experiment_name}': {topics}")
-            else:
-                print(f"No topics found for experiment '{experiment_name}' in admin database")
-                # Try to list available experiments for debugging
-                try:
-                    exp_result = admin_session.execute(text("SELECT exp_name FROM exps"))
-                    available_exps = [row[0] for row in exp_result.fetchall()]
-                    print(f"Available experiments in database: {available_exps}")
-                except Exception:
-                    pass
-            
-            return topics
-            
-        except Exception as e:
-            print(f"Error fetching experiment topics: {e}")
+
+            result = admin_session.execute(
+                text(query), {"experiment_name": experiment_name}
+            )
+            return [row[0] for row in result.fetchall()]
+        except Exception:
             return []
 
     def initialize_experiment_topics(self):
         """
-        Initialize experiment topics from the admin database
-        This should be called early in the setup process
+        Initialize experiment topics from the admin database.
         """
         topics = self.get_experiment_topics()
-        
         if not topics:
-            # Fallback to config-based interests
-            print("No experiment topics found, falling back to config interests")
             topics = self.config.get("agents", {}).get("interests", [])
-        
+
         if not topics:
-            print("No topics/interests found in experiment or config")
             return False
-            
-        # Cache topics for agent creation
+
         self.experiment_topics = topics
-        print(f"Initialized {len(topics)} experiment topics: {topics}")
         return True
 
     def sample_agent_interests(self):
         """
-        Sample interests for a new agent from experiment topics
-        
-        :return: List of sampled interests
+        Sample interests for a new agent from the active experiment topic pool.
         """
         if not self.experiment_topics:
             return []
-            
+
         try:
-            # Get configuration for number of interests per agent
             min_interests = self.config.get("agents", {}).get("n_interests", {}).get("min", 1)
             max_interests = self.config.get("agents", {}).get("n_interests", {}).get("max", 3)
-            
-            # Ensure we don't sample more interests than available
             max_interests = min(max_interests, len(self.experiment_topics))
             min_interests = min(min_interests, max_interests)
-            
-            # Sample number of interests for this agent
             n_interests = random.randint(min_interests, max_interests)
-            
-            # Sample interests without replacement
-            sampled_interests = random.sample(self.experiment_topics, n_interests)
-            
-            return sampled_interests
-            
-        except Exception as e:
-            print(f"Error sampling agent interests: {e}")
+            return random.sample(self.experiment_topics, n_interests)
+        except Exception:
             return []
 
     def assign_agent_interests(self, agent):
         """
-        Assign sampled interests to an agent
-        
-        :param agent: The agent to assign interests to
+        Assign sampled experiment interests to a newly created agent.
         """
-        if not hasattr(agent, 'user_id') or agent.user_id is None:
-            print("Cannot assign interests to agent without user_id")
+        if not hasattr(agent, "user_id") or agent.user_id is None:
             return
-            
+
         sampled_interests = self.sample_agent_interests()
         if not sampled_interests:
-            print("No interests sampled for agent")
             return
-            
+
         try:
-            # Get current round id
             api_url = f"{self.config['servers']['api']}current_time"
             headers = {"Content-Type": "application/x-www-form-urlencoded"}
             response = get(f"{api_url}", headers=headers)
-            
+
             if response.status_code == 200:
                 data = json.loads(response.content.decode("utf-8"))
                 round_id = int(data.get("id", 0))
             else:
                 round_id = 0
-                
-            # Assign interests to the agent using set_user_interests route
+
             api_url = f"{self.config['servers']['api']}set_user_interests"
-            
             interest_data = {
                 "user_id": agent.user_id,
                 "interests": sampled_interests,
-                "round": round_id
+                "round": round_id,
             }
-            
-            response = post(f"{api_url}", headers=headers, data=json.dumps(interest_data))
-            if response.status_code != 200:
-                print(f"Failed to assign interests to agent {agent.name}")
-            else:
-                print(f"Assigned {len(sampled_interests)} interests to agent {agent.name}: {sampled_interests}")
-            
-        except Exception as e:
-            print(f"Error assigning interests to agent {agent.name}: {e}")
+            post(f"{api_url}", headers=headers, data=json.dumps(interest_data))
+        except Exception:
+            return
 
     def set_interests(self):
         """
-        Set the interests of the agents based on experiment topics
+        Set the global experiment interests.
         """
         if not self.experiment_topics:
             if not self.initialize_experiment_topics():
                 return
-        
+
         api_url = f"{self.config['servers']['api']}set_interests"
+
         headers = {"Content-Type": "application/x-www-form-urlencoded"}
-        
         post(f"{api_url}", headers=headers, data=json.dumps(self.experiment_topics))
 
     def set_recsys(self, c_recsys, f_recsys):
@@ -443,27 +418,40 @@ class YClientBase(object):
         self.content_recsys = c_recsys
         self.follow_recsys = f_recsys
 
-    def add_agent(self, agent=None):
+    def add_agent(self, agent=None, username_type=None):
         """
         Add an agent to the simulation
 
         :param agent: the agent to add
         """
         if agent is None:
-            try:
-                agent = generate_user(self.config, owner=self.agents_owner)
+            max_attempts = 8
+            used_names = {a.name for a in self.agents.agents if getattr(a, "name", None)}
+            for attempt in range(max_attempts):
+                try:
+                    agent = generate_user(
+                        self.config,
+                        owner=self.agents_owner,
+                        username_type=username_type,
+                        used_names=used_names,
+                    )
+                    if agent is None:
+                        continue
+                    agent.set_prompts(self.prompts)
+                    agent.set_rec_sys(self.content_recsys, self.follow_recsys)
+                    break
+                except Exception as e:
+                    print(
+                        f"Error creating agent (attempt {attempt + 1}/{max_attempts}): {e}"
+                    )
+                    import traceback
 
-                if agent is None:
-                    return
-                agent.set_prompts(self.prompts)
-                agent.set_rec_sys(self.content_recsys, self.follow_recsys)
-            except Exception as e:
-                print(f"Error creating agent: {e}")
-                import traceback
-                traceback.print_exc()
+                    traceback.print_exc()
+                    agent = None
+            if agent is None:
+                return
         if agent is not None:
             self.agents.add_agent(agent)
-            # Assign interests to the agent after it's been created and has a user_id
             self.assign_agent_interests(agent)
 
     def create_initial_population(self):
@@ -591,8 +579,7 @@ class YClientBase(object):
                         candidates.append("NONE")
 
                         # reply to received mentions
-                        if g not in self.pages:
-                            g.reply(tid=tid)
+                        g.reply(tid=tid)
 
                         # select action to be performed
                         g.select_action(
@@ -600,6 +587,10 @@ class YClientBase(object):
                             actions=candidates,
                             max_length_thread_reading=self.max_length_thread_reading,
                         )
+
+                    # Reset post counter and temperature after agent's round is complete
+                    g.reset_round_post_count()
+
                 # increment slot
                 self.sim_clock.increment_slot()
 
@@ -608,15 +599,13 @@ class YClientBase(object):
                 agent
                 for agent in self.agents.agents
                 if agent.name in daily_active
-                and agent not in self.pages
                 and random.random()
                 < float(self.config["agents"]["probability_of_daily_follow"])
             ]
 
             print("\n\nEvaluating new friendship ties")
             for agent in tqdm.tqdm(da):
-                if agent not in self.pages:
-                    agent.select_action(tid=tid, actions=["FOLLOW", "NONE"])
+                agent.select_action(tid=tid, actions=["FOLLOW", "NONE"])
 
             total_users = len(self.agents.agents)
 
