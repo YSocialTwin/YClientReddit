@@ -19,30 +19,30 @@
     "percentage_new_agents_iteration": 0.07,
     "percentage_removed_agents_iteration": 0.014,
     "hourly_activity": {
-       "10": 0.021,
-       "16": 0.032,
-       "8": 0.020,
-       "12": 0.024,
-       "15": 0.032,
-       "17": 0.032,
-       "23": 0.025,
-       "6": 0.017,
-       "18": 0.032,
-       "11": 0.022,
-       "13": 0.027,
-       "14": 0.030,
-       "20": 0.030,
-       "21": 0.029,
-       "7": 0.018,
-       "22": 0.027,
-       "9": 0.020,
-       "3": 0.020,
-       "5": 0.017,
-       "4": 0.018,
-       "1": 0.021,
-       "2": 0.020,
-       "0": 0.023,
-       "19": 0.031
+      "10": 0.021,
+      "16": 0.032,
+      "8": 0.02,
+      "12": 0.024,
+      "15": 0.032,
+      "17": 0.032,
+      "23": 0.025,
+      "6": 0.017,
+      "18": 0.032,
+      "11": 0.022,
+      "13": 0.027,
+      "14": 0.03,
+      "20": 0.03,
+      "21": 0.029,
+      "7": 0.018,
+      "22": 0.027,
+      "9": 0.02,
+      "3": 0.02,
+      "5": 0.017,
+      "4": 0.018,
+      "1": 0.021,
+      "2": 0.02,
+      "0": 0.023,
+      "19": 0.031
     },
     "actions_likelihood": {
       "post": 0.2,
@@ -56,64 +56,146 @@
     }
   },
   "agents": {
-    "languages": ["english"],
-    "education_levels": ["high school", "bachelor", "master", "phd"],
+    "languages": [
+      "english"
+    ],
+    "education_levels": [
+      "high school",
+      "bachelor",
+      "master",
+      "phd"
+    ],
     "max_length_thread_reading": 4,
     "reading_from_follower_ratio": 0.6,
     "political_leanings": [
-      "Democrat", "Republican", "Independent"
-      ],
+      "Democrat",
+      "Republican",
+      "Independent"
+    ],
     "age": {
-        "min": 18,
-        "max": 60
+      "min": 18,
+      "max": 60
     },
     "daily_actions": {
       "min": 1,
       "max": 3
     },
-    "llm_agents": ["llama3.2"],
-    "llm_v_agent": ["minicpm-v"],
+    "llm_agents": [
+      "llama3.2"
+    ],
+    "llm_v_agent": [
+      "minicpm-v"
+    ],
     "n_interests": {
-        "min": 4,
-        "max": 10
+      "min": 4,
+      "max": 10
     },
     "round_actions": {
       "min": 1,
       "max": 3
     },
-    "nationalities": ["American"],
+    "nationalities": [
+      "American"
+    ],
     "probability_of_daily_follow": 0.1,
     "interests": [
-      "improbable sports", "bad tv shows", "niche music", "surreal science fiction", "smurfs habits",
-      "books without readers", "silly political facts", "extreme gardening", "travel nightmares", "eccentric hobbies"
+      "improbable sports",
+      "bad tv shows",
+      "niche music",
+      "surreal science fiction",
+      "smurfs habits",
+      "books without readers",
+      "silly political facts",
+      "extreme gardening",
+      "travel nightmares",
+      "eccentric hobbies"
     ],
     "toxicity_levels": [
-            "absolutely no",
-            "no",
-            "moderately",
-            "extremely"
-        ],
+      "absolutely no",
+      "no",
+      "moderately",
+      "extremely"
+    ],
     "attention_window": 336,
     "big_five": {
-      "oe": ["inventive/curious", "consistent/cautious"],
-      "co": ["efficient/organized", "extravagant/careless"],
-      "ex": ["outgoing/energetic", "solitary/reserved"],
-      "ag": ["friendly/compassionate", "critical/judgmental"],
-      "ne": ["sensitive/nervous", "resilient/confident"]
-    }
+      "oe": [
+        "inventive/curious",
+        "consistent/cautious"
+      ],
+      "co": [
+        "efficient/organized",
+        "extravagant/careless"
+      ],
+      "ex": [
+        "outgoing/energetic",
+        "solitary/reserved"
+      ],
+      "ag": [
+        "friendly/compassionate",
+        "critical/judgmental"
+      ],
+      "ne": [
+        "sensitive/nervous",
+        "resilient/confident"
+      ]
+    },
+    "memory_high_affect_enabled": false,
+    "memory_high_affect_rule_threshold": 0.55,
+    "memory_high_affect_uncertain_low": 0.35,
+    "memory_high_affect_uncertain_high": 0.7,
+    "memory_high_affect_search_k": 12,
+    "memory_high_affect_max_items": 6,
+    "memory_high_affect_max_chars": 900,
+    "memory_high_affect_callback_retry_count": 1,
+    "memory_high_affect_llm_fallback": true,
+    "memory_nuance_planner_enabled": false,
+    "memory_prompt_mode": "subtle_forum",
+    "memory_reply_context_max_chars": 280,
+    "memory_vote_signal_only": true,
+    "forum_post_structure_strict": true,
+    "memory_cross_thread_callback_min_score": 0.8,
+    "reply_length_enforcement_enabled": true,
+    "comment_max_chars": 220,
+    "comment_max_sentences": 2,
+    "post_max_chars": 420,
+    "post_max_sentences": 3,
+    "reply_rewrite_max_attempts": 1,
+    "reply_trim_fallback_enabled": true,
+    "style_elaborate_enabled": false,
+    "anti_repetition_enabled": true,
+    "anti_repetition_window_comments": 6
   },
   "posts": {
     "visibility_rounds": 36,
     "emotions": {
-      "admiration": null, "amusement": null, "anger": null, "annoyance": null,
-      "approval": null, "caring": null, "confusion": null, "curiosity": null,
-      "desire": null, "disappointment": null, "disapproval": null, "disgust": null,
-      "embarrassment": null, "excitement": null, "fear": null, "gratitude": null,
-      "grief": null, "joy": null, "love": null, "nervousness": null, "optimism": null,
-      "pride": null, "realization": null, "relief": null, "remorse": null, "sadness": null,
-      "surprise": null, "trust": null
+      "admiration": null,
+      "amusement": null,
+      "anger": null,
+      "annoyance": null,
+      "approval": null,
+      "caring": null,
+      "confusion": null,
+      "curiosity": null,
+      "desire": null,
+      "disappointment": null,
+      "disapproval": null,
+      "disgust": null,
+      "embarrassment": null,
+      "excitement": null,
+      "fear": null,
+      "gratitude": null,
+      "grief": null,
+      "joy": null,
+      "love": null,
+      "nervousness": null,
+      "optimism": null,
+      "pride": null,
+      "realization": null,
+      "relief": null,
+      "remorse": null,
+      "sadness": null,
+      "surprise": null,
+      "trust": null
     }
   }
-
-
 }
