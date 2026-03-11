@@ -6,9 +6,11 @@ in the Y social network simulation. Page agents differ from regular agents by
 focusing solely on publishing news content from RSS feeds.
 """
 
+import copy
 import json
 import re
 
+import numpy as np
 from autogen import AssistantAgent
 from requests import post
 from y_client.classes.base_agent import Agent
@@ -45,9 +47,26 @@ class PageAgent(Agent):
         super().__init__(*args, **kwargs)
         self.feed_url = kwargs.get("feed_url")
         self.name = kwargs.get("name")
+        # Track posted article links to prevent duplicates
+        self._posted_links = set()
+
+    def __get_fresh_llm_config(self):
+        """
+        Get a fresh LLM config with a new random seed.
+
+        AutoGen caches LLM responses based on the seed value. Using the same
+        seed with identical prompts returns cached responses, causing duplicate
+        content. This method creates a new config with a unique seed for each call.
+
+        Returns:
+            dict: A copy of llm_config with a new random seed
+        """
+        fresh_config = copy.deepcopy(self.llm_config)
+        fresh_config["seed"] = np.random.randint(0, 100000)
+        return fresh_config
 
     @log_execution_time
-    def select_action(self, tid, actions, max_length_thread_reading=5):
+    def select_action(self, tid, actions, max_length_thread_reading=10):
         """
         Select and perform the page's action for the current time slot.
         
@@ -67,7 +86,16 @@ class PageAgent(Agent):
         # a page can only post news
         news, website = self.select_news()
         if not isinstance(news, str):
+            # Check for duplicate - skip if already posted this article
+            article_link = getattr(news, 'link', None)
+            if article_link and article_link in self._posted_links:
+                return  # Skip duplicate
+
             self.news(tid=tid, article=news, website=website)
+
+            # Record the posted article link
+            if article_link:
+                self._posted_links.add(article_link)
         return
 
     def select_news(self):
@@ -90,7 +118,15 @@ class PageAgent(Agent):
             return "", ""
 
         # Select a random article
-        website_feed = NewsFeed(website.name, website.rss)
+        # Pass image extraction settings from website configuration
+        fetch_images_from_url = getattr(website, 'fetch_images_from_url', False) or False
+        fetch_images_timeout = getattr(website, 'fetch_images_timeout', 10) or 10
+        website_feed = NewsFeed(
+            website.name,
+            website.rss,
+            fetch_images_from_url=fetch_images_from_url,
+            fetch_images_timeout=fetch_images_timeout,
+        )
         website_feed.read_feed()
         article = website_feed.get_random_news()
         return article, website
@@ -112,7 +148,7 @@ class PageAgent(Agent):
         """
         return
 
-    def reply(self, tid: int, max_length_thread_reading: int = 5):
+    def reply(self, tid: int, max_length_thread_reading: int = 10):
         """
         Reply to a comment (disabled for page agents).
         
@@ -152,10 +188,12 @@ class PageAgent(Agent):
         Returns:
             Response: HTTP response object from the POST request to the news endpoint
         """
+        # Use fresh config with new seed to avoid AutoGen caching identical responses
+        fresh_config = self.__get_fresh_llm_config()
 
         u1 = AssistantAgent(
             name=f"{self.name}",
-            llm_config=self.llm_config,
+            llm_config=fresh_config,
             system_message=self.__effify(
                 self.prompts["page_roleplay"], website=website, article=article
             ),
@@ -164,27 +202,43 @@ class PageAgent(Agent):
 
         u2 = AssistantAgent(
             name=f"Handler",
-            llm_config=self.llm_config,
+            llm_config=fresh_config,
             system_message=self.__effify(self.prompts["handler_instructions_topics"]),
             max_consecutive_auto_reply=1,
         )
 
+        handler_prompt = self.__effify(
+            self.prompts["handler_news"], website=website, article=article
+        )
         u2.initiate_chat(
             u1,
-            message=self.__effify(
-                self.prompts["handler_news"], website=website, article=article
-            ),
+            message=handler_prompt,
             silent=True,
             max_round=1,
         )
 
-        topic_eval = u2.chat_messages[u1][-1]["content"]
+        topic_eval = ""
+        for msg in reversed(self._extract_chat_messages(u2, u1)):
+            if not isinstance(msg, dict):
+                continue
+            content = msg.get("content")
+            if not isinstance(content, str) or not content.strip():
+                continue
+            if "#T:" in content or "#t:" in content:
+                topic_eval = content
+                break
 
-        topics = re.findall(r"[#T]: \w+ \w+", topic_eval)
+        topics = re.findall(r"[#Tt]: \w+ \w+", topic_eval)
         topics = [x.split(": ")[1] for x in topics if "Topic" not in x]
 
-        post_text = u2.chat_messages[u1][-2]["content"]
+        post_text = self._extract_generated_chat_content(
+            u2, u1, prompt_hint=handler_prompt, skip_emotion_like=True
+        )
+        post_text = self._Agent__clean_text(post_text)
         post_text = post_text.replace(f"@{self.name}", "")
+
+        # Strip reproduced article content from LLM output
+        post_text = self.__strip_reproduced_content(post_text, article.summary)
 
         hashtags = self.__extract_components(post_text, c_type="hashtags")
         mentions = self.__extract_components(post_text, c_type="mentions")
@@ -236,7 +290,14 @@ class PageAgent(Agent):
             str: The evaluated f-string with placeholders replaced by values
         """
         kwargs["self"] = self
-        return eval(f'f"""{non_f_str}"""', kwargs)
+        rendered = eval(f'f"""{non_f_str}"""', kwargs)
+        if isinstance(rendered, str):
+            rendered = (
+                f"{rendered.rstrip()}\n\n"
+                "STYLE RULE: Do not use any dash characters. This includes U+2014 em dash, "
+                "U+2013 en dash, and ASCII minus sign. Use commas, periods, or parentheses instead."
+            )
+        return rendered
 
     def __extract_components(self, text, c_type="hashtags"):
         """
@@ -262,6 +323,61 @@ class PageAgent(Agent):
         # Find all matches in the input text
         hashtags = pattern.findall(text)
         return hashtags
+
+    def __strip_reproduced_content(self, post_text: str, article_summary: str) -> str:
+        """
+        Strip reproduced article content from LLM-generated post text.
+
+        Uses Jaccard similarity to detect when the LLM has copied the article
+        summary into its response, and removes the duplicated content.
+
+        Args:
+            post_text: The LLM-generated post text
+            article_summary: The original article summary
+
+        Returns:
+            str: Post text with reproduced content removed
+        """
+        if not post_text or not article_summary:
+            return post_text
+
+        # Calculate Jaccard similarity
+        def get_words(text):
+            return set(re.findall(r'\b\w+\b', text.lower()))
+
+        post_words = get_words(post_text)
+        summary_words = get_words(article_summary)
+
+        if not post_words or not summary_words:
+            return post_text
+
+        intersection = len(post_words & summary_words)
+        union = len(post_words | summary_words)
+        similarity = intersection / union if union > 0 else 0
+
+        # If similarity is high, strip the reproduced content
+        if similarity >= 0.6:
+            # Split into sentences and filter out those too similar to article
+            sentences = re.split(r'(?<=[.!?])\s+', post_text)
+            filtered_sentences = []
+
+            for sentence in sentences:
+                sentence_words = get_words(sentence)
+                if sentence_words:
+                    # Check overlap ratio with article
+                    overlap_ratio = len(sentence_words & summary_words) / len(sentence_words)
+                    sentence_similarity = len(sentence_words & summary_words) / len(sentence_words | summary_words) if (sentence_words | summary_words) else 0
+
+                    # Keep sentences that are sufficiently different
+                    if sentence_similarity < 0.36 and overlap_ratio < 0.7:
+                        filtered_sentences.append(sentence)
+
+            if filtered_sentences:
+                return ' '.join(filtered_sentences)
+            else:
+                return ""
+
+        return post_text
 
     def __str__(self):
         """

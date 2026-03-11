@@ -159,3 +159,83 @@ class ReverseChronoFollowersPopularity(ContentRecSys):
             "mode": "rchrono_followers_popularity",
             "visibility_rounds": visibility_rounds,
         }
+
+
+class HotRanking(ContentRecSys):
+    def __init__(
+        self,
+        n_posts=10,
+        visibility_rounds=36,
+        round_decay=12,
+        hot_vote_thresh1=3,
+        hot_vote_thresh2=8,
+        hot_longtail_j1=0.45,
+        hot_longtail_j2=0.20,
+    ):
+        """
+        Reddit-style hot ranking content recommendation system.
+
+        Uses logarithmic scoring: log10(max(|score|, 1)) + sign(score) * round / round_decay
+        This gives new posts a jumpstart - every round_decay rounds, a post needs ~10x
+        more votes to maintain the same position against newer posts.
+
+        :param n_posts: the number of posts to recommend
+        :param visibility_rounds: the number of visibility rounds
+        :param round_decay: rounds for 10x vote equivalence (default 12)
+        """
+        super(HotRanking, self).__init__(
+            n_posts=n_posts, visibility_rounds=visibility_rounds
+        )
+        self.name = "HotRanking"
+        self.params = {
+            "limit": n_posts,
+            "mode": "hot",
+            "visibility_rounds": visibility_rounds,
+            "round_decay": round_decay,
+            "hot_vote_thresh1": hot_vote_thresh1,
+            "hot_vote_thresh2": hot_vote_thresh2,
+            "hot_longtail_j1": hot_longtail_j1,
+            "hot_longtail_j2": hot_longtail_j2,
+        }
+
+
+class TopRanking(ContentRecSys):
+    def __init__(self, n_posts=10, visibility_rounds=36):
+        """
+        Reddit-style top ranking content recommendation system.
+
+        Sorts posts by net score (likes - dislikes) without time decay.
+
+        :param n_posts: the number of posts to recommend
+        :param visibility_rounds: the number of visibility rounds
+        """
+        super(TopRanking, self).__init__(
+            n_posts=n_posts, visibility_rounds=visibility_rounds
+        )
+        self.name = "TopRanking"
+        self.params = {
+            "limit": n_posts,
+            "mode": "top",
+            "visibility_rounds": visibility_rounds,
+        }
+
+
+class MostCommented(ContentRecSys):
+    def __init__(self, n_posts=10, visibility_rounds=36):
+        """
+        Reddit-style most commented content recommendation system.
+
+        Sorts posts by comment count.
+
+        :param n_posts: the number of posts to recommend
+        :param visibility_rounds: the number of visibility rounds
+        """
+        super(MostCommented, self).__init__(
+            n_posts=n_posts, visibility_rounds=visibility_rounds
+        )
+        self.name = "MostCommented"
+        self.params = {
+            "limit": n_posts,
+            "mode": "most_commented",
+            "visibility_rounds": visibility_rounds,
+        }
