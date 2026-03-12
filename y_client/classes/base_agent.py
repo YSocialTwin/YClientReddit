@@ -7,6 +7,8 @@ from sqlalchemy.sql.expression import func
 from sqlalchemy import text
 from y_client.news_feeds.feed_reader import NewsFeed
 from y_client.classes.time import SimulationSlot
+from y_client.memory_runtime import build_agent_memory_engine
+from yclient_memory.contracts import BrowseMemoryRequest, CommentMemoryEvent, PostMemoryEvent, PostStyleRequest, ReplyMemoryRequest, VoteMemoryEvent
 import random
 from requests import get, post
 import json
@@ -1065,6 +1067,10 @@ class Agent(object):
         self._memory_thread_event_counts = {}  # thread_root_id -> count (client-only)
         self._memory_last_reflection_round = None
         self._memory_reflection_count = 0
+        self.memory_backend = str(agents_cfg.get("memory_backend") or "hybrid_semantic").strip().lower()
+        self._external_memory_runtime = None
+        self._external_memory_engine = None
+        self._external_memory_disabled = False
 
         if not self.memory_enabled:
             self.memory_run_id = None
@@ -1095,6 +1101,52 @@ class Agent(object):
                 )
             else:
                 _MEMORY_RESET_DONE = True
+
+    def _memory_get_external_engine(self):
+        if not getattr(self, "memory_enabled", False):
+            return None
+        if getattr(self, "_external_memory_disabled", False):
+            return None
+        engine = getattr(self, "_external_memory_engine", None)
+        if engine is None:
+            try:
+                runtime, engine = build_agent_memory_engine(self)
+            except Exception as exc:
+                logging.warning("External memory engine unavailable, falling back to legacy helpers: %s", exc)
+                self._external_memory_disabled = True
+                return None
+            self._external_memory_runtime = runtime
+            self._external_memory_engine = engine
+        return self._memory_sync_external_engine()
+
+    def _memory_sync_external_engine(self):
+        engine = getattr(self, "_external_memory_engine", None)
+        if engine is None:
+            return None
+        if hasattr(engine, "_fetch_context"):
+            engine._fetch_context = (
+                lambda *, other_user_id=None, thread_root_id=None: self._memory_fetch_context(
+                    other_user_id=other_user_id,
+                    thread_root_id=thread_root_id,
+                )
+                or {}
+            )
+        if hasattr(engine, "_search"):
+            engine._search = lambda **kwargs: self._memory_search(**kwargs) or {
+                "retrieval_meta": {
+                    "degraded_mode": False,
+                    "embedding_degraded": False,
+                    "no_ready_candidates": True,
+                },
+                "items": [],
+            }
+        if hasattr(engine, "_community_digest"):
+            engine._community_digest = (
+                self._memory_cache_digest if isinstance(getattr(self, "_memory_cache_digest", None), dict) else None
+            )
+        if hasattr(engine, "_detect_prior_opinion_match"):
+            engine._detect_prior_opinion_match = lambda **kwargs: self._memory_detect_prior_opinion_match(**kwargs)
+        return engine
 
     # ------------------------------------------------------------------
     # Structured decision logging (server-side JSON logs).
@@ -2424,6 +2476,50 @@ class Agent(object):
         other_username=None,
         round_id=None,
     ):
+        engine = self._memory_get_external_engine()
+        if engine is None:
+            return self._memory_build_reply_context_legacy(
+                query_text=query_text,
+                other_user_id=other_user_id,
+                thread_root_id=thread_root_id,
+                other_username=other_username,
+                round_id=round_id,
+            )
+        result = engine.build_reply_context(
+            ReplyMemoryRequest(
+                query_text=query_text,
+                other_user_id=other_user_id,
+                other_username=other_username,
+                thread_root_id=thread_root_id,
+                round_id=round_id,
+            )
+        )
+        meta = {
+            "search_used": bool(result.diagnostics.search_used),
+            "degraded_mode": bool(result.diagnostics.degraded_mode),
+            "embedding_degraded": bool(result.diagnostics.embedding_degraded),
+            "no_ready_candidates": bool(result.diagnostics.no_ready_candidates),
+            "tier_c_used": bool(result.diagnostics.tier_c_used),
+            "retrieved_item_count": int(result.diagnostics.retrieved_item_count or 0),
+            "top_score": result.diagnostics.top_score,
+            "fallback_used": bool(result.diagnostics.fallback_used),
+            "continuity_text": result.continuity_text,
+            "cross_thread_callback_candidate": bool(
+                result.diagnostics.metadata.get("cross_thread_callback_candidate", False)
+            ),
+            "cross_thread_callback_score": result.diagnostics.metadata.get("cross_thread_callback_score"),
+        }
+        return result.rendered_text, meta
+
+    def _memory_build_reply_context_legacy(
+        self,
+        *,
+        query_text: str,
+        other_user_id=None,
+        thread_root_id=None,
+        other_username=None,
+        round_id=None,
+    ):
         meta = {
             "search_used": False,
             "degraded_mode": False,
@@ -2630,6 +2726,19 @@ class Agent(object):
         return "\n".join(memory_lines).strip(), meta
 
     def _memory_build_post_style_context(self, *, tid: int):
+        engine = self._memory_get_external_engine()
+        if engine is None:
+            return self._memory_build_post_style_context_legacy(tid=tid)
+        result = engine.build_post_style_context(PostStyleRequest(round_id=int(tid)))
+        meta = {
+            "usage": result.diagnostics.usage or "none",
+            "root_count": int(result.diagnostics.metadata.get("root_count") or 0),
+            "distinct_author_count": int(result.diagnostics.metadata.get("distinct_author_count") or 0),
+            "mature": bool(result.diagnostics.metadata.get("mature", False)),
+        }
+        return result.rendered_text, meta
+
+    def _memory_build_post_style_context_legacy(self, *, tid: int):
         meta = {
             "usage": "none",
             "root_count": 0,
@@ -2690,6 +2799,15 @@ class Agent(object):
         return self._memory_truncate("\n".join(lines), 280), meta
 
     def _memory_build_thread_browse_context(self, *, thread_root_id: int, tid: int):
+        engine = self._memory_get_external_engine()
+        if engine is None:
+            return self._memory_build_thread_browse_context_legacy(thread_root_id=thread_root_id, tid=tid)
+        result = engine.build_browse_context(
+            BrowseMemoryRequest(thread_root_id=thread_root_id, round_id=int(tid))
+        )
+        return result.rendered_text, {"usage": result.diagnostics.usage or "none"}
+
+    def _memory_build_thread_browse_context_legacy(self, *, thread_root_id: int, tid: int):
         meta = {"usage": "none"}
         if not getattr(self, "memory_enabled", False):
             return "", meta
@@ -2774,6 +2892,12 @@ class Agent(object):
         )
 
     def _post_find_recent_topic_matches(self, *, text_value: str, tid: int):
+        engine = self._memory_get_external_engine()
+        if engine is None:
+            return self._post_find_recent_topic_matches_legacy(text_value=text_value, tid=tid)
+        return engine.post_find_recent_topic_matches(text_value=text_value, round_id=int(tid))
+
+    def _post_find_recent_topic_matches_legacy(self, *, text_value: str, tid: int):
         matches = []
         fingerprint = self._post_topic_fingerprint(text_value)
         recent_roots = self._memory_get_recent_root_posts(
@@ -3476,6 +3600,35 @@ class Agent(object):
         round_id=None,
         target_username: str = "",
     ):
+        engine = self._memory_get_external_engine()
+        if engine is None or not hasattr(engine, "detect_high_affect_signal"):
+            return self._detect_high_affect_signal_legacy(
+                incoming_text=incoming_text,
+                thread_context=thread_context,
+                other_user_id=other_user_id,
+                thread_root_id=thread_root_id,
+                round_id=round_id,
+                target_username=target_username,
+            )
+        return engine.detect_high_affect_signal(
+            incoming_text=incoming_text,
+            thread_context=thread_context,
+            other_user_id=other_user_id,
+            thread_root_id=thread_root_id,
+            round_id=round_id,
+            target_username=target_username,
+        )
+
+    def _detect_high_affect_signal_legacy(
+        self,
+        *,
+        incoming_text: str,
+        thread_context: str,
+        other_user_id=None,
+        thread_root_id=None,
+        round_id=None,
+        target_username: str = "",
+    ):
         text = str(incoming_text or "").strip()
         norm = re.sub(r"\s+", " ", text).strip().lower()
         if not norm:
@@ -3929,6 +4082,35 @@ class Agent(object):
         round_id=None,
         target_username: str = "",
     ):
+        engine = self._memory_get_external_engine()
+        if engine is None or not hasattr(engine, "collect_high_affect_recall"):
+            return self._memory_collect_high_affect_recall_legacy(
+                incoming_text=incoming_text,
+                thread_context=thread_context,
+                other_user_id=other_user_id,
+                thread_root_id=thread_root_id,
+                round_id=round_id,
+                target_username=target_username,
+            )
+        return engine.collect_high_affect_recall(
+            incoming_text=incoming_text,
+            thread_context=thread_context,
+            other_user_id=other_user_id,
+            thread_root_id=thread_root_id,
+            round_id=round_id,
+            target_username=target_username,
+        )
+
+    def _memory_collect_high_affect_recall_legacy(
+        self,
+        *,
+        incoming_text: str,
+        thread_context: str,
+        other_user_id=None,
+        thread_root_id=None,
+        round_id=None,
+        target_username: str = "",
+    ):
         pack = {
             "items": [],
             "counts_by_bucket": {},
@@ -4163,6 +4345,12 @@ class Agent(object):
         return "\n".join(lines)
 
     def _memory_reply_references_recalled_item(self, reply_text: str, recalled_items):
+        engine = self._memory_get_external_engine()
+        if engine is None or not hasattr(engine, "reply_references_recalled_item"):
+            return self._memory_reply_references_recalled_item_legacy(reply_text, recalled_items)
+        return engine.reply_references_recalled_item(reply_text, recalled_items)
+
+    def _memory_reply_references_recalled_item_legacy(self, reply_text: str, recalled_items):
         if not isinstance(reply_text, str) or not reply_text.strip():
             return False, "empty_reply"
         if not isinstance(recalled_items, list) or not recalled_items:
@@ -5606,6 +5794,46 @@ class Agent(object):
         my_text: str,
         conv_text: str,
     ):
+        engine = self._memory_get_external_engine()
+        if engine is not None:
+            try:
+                engine.record_comment(
+                    CommentMemoryEvent(
+                        round_id=int(tid),
+                        target_post_id=int(target_post_id),
+                        thread_root_id=int(thread_root_id),
+                        other_user_id=int(other_user_id) if other_user_id is not None else None,
+                        other_username=other_username,
+                        other_text=other_text or "",
+                        my_text=my_text or "",
+                        conv_text=conv_text or "",
+                    )
+                )
+            except Exception:
+                pass
+        return self._memory_after_comment_legacy(
+            tid=tid,
+            target_post_id=target_post_id,
+            thread_root_id=thread_root_id,
+            other_user_id=other_user_id,
+            other_username=other_username,
+            other_text=other_text,
+            my_text=my_text,
+            conv_text=conv_text,
+        )
+
+    def _memory_after_comment_legacy(
+        self,
+        *,
+        tid: int,
+        target_post_id: int,
+        thread_root_id: int,
+        other_user_id: int,
+        other_username: str,
+        other_text: str,
+        my_text: str,
+        conv_text: str,
+    ):
         if not getattr(self, "memory_enabled", False):
             return
 
@@ -5690,6 +5918,21 @@ class Agent(object):
         )
 
     def _memory_after_vote(self, *, tid: int, post_id: int, vote_type: str):
+        engine = self._memory_get_external_engine()
+        if engine is not None:
+            try:
+                engine.record_vote(
+                    VoteMemoryEvent(
+                        round_id=int(tid),
+                        post_id=int(post_id),
+                        vote_type=str(vote_type),
+                    )
+                )
+            except Exception:
+                pass
+        return self._memory_after_vote_legacy(tid=tid, post_id=post_id, vote_type=vote_type)
+
+    def _memory_after_vote_legacy(self, *, tid: int, post_id: int, vote_type: str):
         if not getattr(self, "memory_enabled", False):
             return
 
@@ -5760,6 +6003,21 @@ class Agent(object):
             )
 
     def _memory_after_post(self, *, tid: int, post_text: str, topics=None):
+        engine = self._memory_get_external_engine()
+        if engine is not None:
+            try:
+                engine.record_post(
+                    PostMemoryEvent(
+                        round_id=int(tid),
+                        text=post_text or "",
+                        user_id=int(getattr(self, "user_id", -1) or -1),
+                    )
+                )
+            except Exception:
+                pass
+        return self._memory_after_post_legacy(tid=tid, post_text=post_text, topics=topics)
+
+    def _memory_after_post_legacy(self, *, tid: int, post_text: str, topics=None):
         if not getattr(self, "memory_enabled", False):
             return
 
@@ -6183,6 +6441,12 @@ class Agent(object):
         return title.strip(), body.strip()
 
     def _validate_structured_post_text(self, text: str):
+        engine = self._memory_get_external_engine()
+        if engine is None or not hasattr(engine, "validate_structured_post_text"):
+            return self._validate_structured_post_text_legacy(text)
+        return engine.validate_structured_post_text(text)
+
+    def _validate_structured_post_text_legacy(self, text: str):
         title, body = self._parse_structured_post_text(text)
         valid = True
         reasons = []
