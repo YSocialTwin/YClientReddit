@@ -5733,9 +5733,12 @@ class Agent(object):
             parsed = parsed[0] if parsed and isinstance(parsed[0], dict) else None
         if not isinstance(parsed, dict):
             if isinstance(raw, str) and raw.strip():
-                self._memory_warn(
-                    f"community digest parse fallback at round {tid}; raw={self._memory_truncate(raw, 240)}"
-                )
+                try:
+                    logging.info(
+                        f"[{self.name}][memory] community digest parse fallback at round {tid}; raw={self._memory_truncate(raw, 240)}"
+                    )
+                except Exception:
+                    pass
             parsed = self._memory_build_community_digest_fallback(root_posts, prev_digest_text=prev_digest_text)
 
         update_payload = {"run_id": self.memory_run_id, "round_id": int(tid)}
