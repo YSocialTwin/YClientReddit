@@ -10579,11 +10579,17 @@ class Agent(object):
                 )[0]
                 self.follow(tid=tid, target=selected, action="follow")
 
-        # demanded to page agents
-        # elif "NEWS" in text.split():
-        #    news, website = self.select_news()
-        #    if not isinstance(news, str):
-        #        self.news(tid=tid, article=news, website=website)
+        # Forum keeps backward compatibility with older NEWS probabilities by treating
+        # NEWS as a link-sharing alias.
+        elif "NEWS" in text.split():
+            article, website = self.select_link(tid=tid)
+            if article and website and not isinstance(article, str):
+                self.share_link(tid=tid, article=article, website=website)
+            else:
+                logging.info(
+                    "Agent %s: No suitable article found for NEWS; skipping action.",
+                    self.name,
+                )
 
         elif "SHARE_LINK" in text.split():
             article, website = self.select_link(tid=tid)
