@@ -44,7 +44,7 @@ Important memory-related areas include:
 
 ## Experimental external-memory bridge
 
-[`y_client/memory_runtime.py`](/Users/rossetti/PycharmProjects/YClientReddit/y_client/memory_runtime.py) provides an adapter-oriented bridge to an external `yclient_memory` package when the source tree exists locally.
+[`y_client/memory_runtime.py`](/Users/rossetti/PycharmProjects/YClientReddit/y_client/memory_runtime.py) provides an adapter-oriented bridge to the installable `yclient-memory` package.
 
 That file is relevant if you are:
 

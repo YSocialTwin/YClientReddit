@@ -1,13 +1,5 @@
 from __future__ import annotations
 
-import sys
-from pathlib import Path
-
-
-MEMORY_SRC = Path(__file__).resolve().parents[2] / "y_memory_subsystem" / "src"
-if MEMORY_SRC.exists() and str(MEMORY_SRC) not in sys.path:
-    sys.path.insert(0, str(MEMORY_SRC))
-
 from yclient_memory import build_memory_engine  # type: ignore
 from yclient_memory.config import MemoryConfig  # type: ignore
 

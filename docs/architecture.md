@@ -84,7 +84,7 @@ Contains ingestion and feed-domain logic:
 
 ### `y_client/memory_runtime.py`
 
-This file is an integration bridge toward an externalized memory package. It adapts the current Reddit agent to an importable `yclient_memory` runtime when that package is available locally.
+This file is an integration bridge toward the externalized `yclient-memory` package. It adapts the current Reddit agent to the installed `yclient_memory` runtime and backend factory.
 
 ## Client split
 
