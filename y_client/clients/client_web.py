@@ -23,6 +23,7 @@ base = None
 from y_client.classes import Agent, Agents, SimulationSlot
 from y_client.news_feeds import Feeds
 from y_client.news_feeds.client_modals import ImagePosts
+from y_client.clients.logging_utils import resolve_log_file_path
 
 
 class YClientWeb(object):
@@ -54,11 +55,13 @@ class YClientWeb(object):
         from y_client.logger import set_logger
 
         # Configure the logger with the specified log file
-        set_logger(log_file)
+        resolved_log_file = resolve_log_file_path(data_base_path, log_file)
+        set_logger(resolved_log_file)
 
         self.first_run = first_run
         self.llm = llm
         self.base_path = data_base_path
+        self.log_file = resolved_log_file
         self.config = config_file
 
         self.prompts = self._load_prompts_with_defaults(data_base_path)
