@@ -71,13 +71,16 @@ class FakeAgent(Agent):
         is_page: int = 0,
         daily_activity_level: int = 1,
         profession: str = None,
+        opinions: dict = None,
+        experiment_db_path: str = None,
         *args,
         **kwargs,
     ):
         super().__init__(name=name, email=email, pwd=pwd, age=age, interests=interests, leaning=leaning, ag_type=ag_type, load=load, recsys=recsys,
                        frecsys=frecsys, config=config, big_five=big_five, language=language, owner=owner, education_level=education_level, joined_on=joined_on,
                        round_actions=round_actions, gender=gender, nationality=nationality, toxicity=toxicity, api_key=api_key, is_page=is_page,
-                       daily_activity_level=daily_activity_level, profession=profession, *args, **kwargs)
+                       daily_activity_level=daily_activity_level, profession=profession, opinions=opinions,
+                       experiment_db_path=experiment_db_path, *args, **kwargs)
 
 
     def __get_interests(self, tid):

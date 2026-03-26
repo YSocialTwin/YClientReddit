@@ -530,6 +530,8 @@ class YClientWeb(object):
                     prompt=ag.get("prompts", {}),
                     daily_activity_level=ag.get("daily_activity_level", 1),
                     activity_profile=ag.get("activity_profile", "Always On"),
+                    opinions=ag.get("opinions"),
+                    experiment_db_path=os.path.join(self.base_path, "database_server.db"),
                 )
                 agent.set_prompts(self.prompts)
                 self.agents.add_agent(agent)
@@ -623,7 +625,13 @@ class YClientWeb(object):
             try:
                 if a.get("is_page", 0) != 1:
                     ag = Agent(
-                        name=a["name"], email=a["email"], load=True, config=self.config, web=True
+                        name=a["name"],
+                        email=a["email"],
+                        load=True,
+                        config=self.config,
+                        web=True,
+                        opinions=a.get("opinions"),
+                        experiment_db_path=os.path.join(self.base_path, "database_server.db"),
                     )
                     ag.set_prompts(self.prompts)
                     ag.set_rec_sys(self.content_recsys, self.follow_recsys)
