@@ -21,6 +21,7 @@ nav:
   - Architecture:
       - Repository Architecture: architecture.md
       - Memory System: memory.md
+      - Opinion Dynamics: opinion-dynamics.md
       - Logging: logging.md
   - Examples:
       - Usage Examples: examples.md

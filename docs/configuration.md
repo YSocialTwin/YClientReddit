@@ -46,6 +46,7 @@ Key fields:
 - `percentage_removed_agents_iteration`
 - `hourly_activity`
 - `actions_likelihood`
+- `opinion_dynamics`
 
 ### `actions_likelihood`
 
@@ -61,6 +62,27 @@ Current example keys:
 - `search`
 - `cast`
 - `share_link`
+
+### `opinion_dynamics`
+
+This optional block enables topic-level opinion tracking and evolution.
+
+Current committed keys:
+
+- `enabled`
+- `model_name`
+- `parameters.epsilon`
+- `parameters.mu`
+- `parameters.theta`
+- `parameters.cold_start`
+
+Behavior notes:
+
+- the committed default is disabled, which preserves current simulation behavior
+- `bounded_confidence` is the active model implemented in the client
+- the agent opinion state is persisted into the experiment database when the required tables exist
+
+For the runtime model and examples, see [Opinion Dynamics](opinion-dynamics.md).
 
 ## `agents`
 

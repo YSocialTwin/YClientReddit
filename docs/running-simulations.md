@@ -80,3 +80,28 @@ Common generated files:
 - copied current config
 - SQLite database files
 - optional probe results
+
+## Enabling opinion dynamics
+
+Opinion dynamics is opt-in. To enable it, set `simulation.opinion_dynamics.enabled` to `true` in your runtime config.
+
+Minimal example:
+
+```json
+{
+  "simulation": {
+    "opinion_dynamics": {
+      "enabled": true,
+      "model_name": "bounded_confidence",
+      "parameters": {
+        "epsilon": 0.25,
+        "mu": 0.5,
+        "theta": 0.0,
+        "cold_start": "neutral"
+      }
+    }
+  }
+}
+```
+
+With the feature enabled, runs that use the experiment database can persist topic-level opinions into `agent_opinion`. For the model details, see [Opinion Dynamics](opinion-dynamics.md).

@@ -63,6 +63,7 @@ Responsibilities:
 - thread reading and mention handling
 - prompt orchestration
 - memory logic
+- optional topic-level opinion dynamics persistence and updates
 
 ### `y_client/recsys`
 
@@ -158,6 +159,8 @@ The client relies on:
 - an LLM endpoint for prompt-driven behavior
 - a local or remote database, depending on client mode
 
+When `simulation.opinion_dynamics.enabled` is true, the agent layer also uses the experiment database as a lightweight opinion-state store. The current implementation reads topic identifiers from `interests`, seeds first-round rows via `rounds`, and appends opinion updates to `agent_opinion`.
+
 The code is therefore best understood as a simulation client and orchestration layer, not as a fully standalone simulator.
 
 ## Documentation pointers
@@ -165,3 +168,4 @@ The code is therefore best understood as a simulation client and orchestration l
 - configuration reference: [Configuration](configuration.md)
 - client classes and runtime modes: [Clients](clients.md)
 - memory implementation overview: [Memory System](memory.md)
+- opinion-state model and configuration: [Opinion Dynamics](opinion-dynamics.md)
