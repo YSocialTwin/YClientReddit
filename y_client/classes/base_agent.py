@@ -591,7 +591,15 @@ class Agent(object):
             if not topic_ids:
                 return
 
-            author_id = self.get_user_from_post(post_id)
+            author_id, _author_username = self.get_username_from_post(post_id)
+            if author_id is None:
+                legacy_author = self.get_user_from_post(post_id)
+                try:
+                    author_id = int(legacy_author)
+                except (TypeError, ValueError):
+                    author_id = None
+            if author_id is None:
+                return
             params = (self.opinion_dynamics or {}).get("parameters") or {}
             epsilon = float(params.get("epsilon", 0.25))
             mu = float(params.get("mu", 0.5))
@@ -733,6 +741,12 @@ class Agent(object):
         self.name = name
         self.email = email
         self.attention_window = int(config["agents"]["attention_window"])
+        self.probability_of_daily_follow = float(
+            config["agents"].get("probability_of_daily_follow", 0)
+        )
+        self.probability_of_secondary_follow = float(
+            config["agents"].get("probability_of_secondary_follow", 0)
+        )
         self.subreddit_vibe = (
             (config.get("simulation", {}).get("subreddit_vibe") or "").strip()
         )

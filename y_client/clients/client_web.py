@@ -20,7 +20,9 @@ session = None
 engine = None
 base = None
 
-from y_client.classes import Agent, Agents, SimulationSlot
+from y_client.classes.base_agent import Agent, Agents
+from y_client.classes.fake_base_agent import FakeAgent
+from y_client.classes.time import SimulationSlot
 from y_client.news_feeds import Feeds
 from y_client.news_feeds.client_modals import ImagePosts
 from y_client.clients.logging_utils import resolve_log_file_path
@@ -162,6 +164,37 @@ class YClientWeb(object):
         self.follow_recsys = None
         self.network = network
         self.pages = []  # Reddit doesn't have page agents, all are regular users
+
+    def _rule_based_agents_enabled(self):
+        llm_agents = self.config.get("agents", {}).get("llm_agents")
+        return (
+            isinstance(llm_agents, list)
+            and len(llm_agents) == 1
+            and llm_agents[0] is None
+        )
+
+    def _agent_class_for_payload(self, payload):
+        if self._rule_based_agents_enabled():
+            return FakeAgent
+        # Backward compatibility for forum rule-based clients created while the
+        # writer incorrectly persisted llm_agents=[] and empty per-agent types.
+        if not str((payload or {}).get("type") or "").strip():
+            return FakeAgent
+        return Agent
+
+    def _coerce_legacy_rule_based_config(self, payloads):
+        if self._rule_based_agents_enabled():
+            return
+        non_page_payloads = [
+            payload for payload in (payloads or []) if payload.get("is_page", 0) != 1
+        ]
+        if not non_page_payloads:
+            return
+        if all(
+            not str(payload.get("type") or "").strip()
+            for payload in non_page_payloads
+        ):
+            self.config.setdefault("agents", {})["llm_agents"] = [None]
 
     def _load_prompts_with_defaults(self, data_base_path: str):
         exp_prompts_path = Path(data_base_path) / "prompts.json"
@@ -495,13 +528,15 @@ class YClientWeb(object):
             chosen_population = population_candidates[1]
         self.agents_filename = str(chosen_population)
         data = json.load(open(self.agents_filename, "r"))
+        self._coerce_legacy_rule_based_config(data.get("agents", []))
         skipped_pages = 0
         for ag in data["agents"]:
             is_page = ag.get("is_page", 0)
             if is_page != 1:
+                AgentClass = self._agent_class_for_payload(ag)
                 content_recsys = getattr(recsys, ag["rec_sys"])()
                 follow_recsys = getattr(frecsys, ag["frec_sys"])(leaning_bias=1.5)
-                agent = Agent(
+                agent = AgentClass(
                     name=ag["name"],
                     email=ag["email"],
                     pwd=ag["password"],
@@ -619,12 +654,13 @@ class YClientWeb(object):
         :param a_file: the JSON file containing the agents
         """
         agents = json.load(open(a_file, "r"))
-
+        self._coerce_legacy_rule_based_config(agents.get("agents", []))
         skipped_pages = 0
         for a in agents["agents"]:
             try:
                 if a.get("is_page", 0) != 1:
-                    ag = Agent(
+                    AgentClass = self._agent_class_for_payload(a)
+                    ag = AgentClass(
                         name=a["name"],
                         email=a["email"],
                         load=True,

@@ -82,6 +82,15 @@ class FakeAgent(Agent):
                        daily_activity_level=daily_activity_level, profession=profession, opinions=opinions,
                        experiment_db_path=experiment_db_path, *args, **kwargs)
 
+    def _current_db_session(self):
+        try:
+            from y_client.clients.client_web import session as global_session
+            if global_session is not None:
+                return global_session
+        except ImportError:
+            pass
+        return session
+
 
     def __get_interests(self, tid):
         headers = {"Content-Type": "application/x-www-form-urlencoded"}
@@ -172,6 +181,8 @@ class FakeAgent(Agent):
 
         api_url = f"{self.base_url}/post"
         post(f"{api_url}", headers=headers, data=st)
+        if self.opinions_enabled and interests_id:
+            self._record_self_post_opinions(topic_ids=interests_id, tid=int(tid))
 
         # update topic of interest with the ones used to generate the post
         api_url = f"{self.base_url}/set_user_interests"
@@ -337,6 +348,9 @@ class FakeAgent(Agent):
         if self.probability_of_secondary_follow > 0 and res is None:
             self.__evaluate_follow(post_text, post_id, "unfollow", tid)
 
+        if self.opinions_enabled:
+            self.new_opinions(post_id, tid, post_text)
+
     def __update_user_interests(self, post_id, tid):
         """
         Update the user interests based on the post topics.
@@ -423,6 +437,8 @@ class FakeAgent(Agent):
 
         api_url = f"{self.base_url}/share"
         post(f"{api_url}", headers=headers, data=st)
+        if self.opinions_enabled:
+            self.new_opinions(post_id, tid, post_text)
 
     @log_execution_time
     def reaction(self, post_id: int, tid: int, check_follow=True):
@@ -481,6 +497,96 @@ class FakeAgent(Agent):
 
         # update user interests after reaction
         self.__update_user_interests(post_id, tid)
+
+        if self.opinions_enabled:
+            self.new_opinions(post_id, tid, post_text)
+
+    @log_execution_time
+    def share_link(self, tid, article, website):
+        """
+        Share a news link without using the LLM stack.
+        """
+        if not article or not website:
+            return
+
+        article_title = getattr(article, "title", "") or ""
+        article_summary = getattr(article, "summary", "") or ""
+        article_link = getattr(article, "link", "") or ""
+        post_text = f"{article_title}".strip() or "shared link"
+        post_text = self.__clean_text(post_text)
+        if len(post_text) < 3:
+            post_text = "shared link"
+
+        article_fetched_on = getattr(article, "published", None)
+        if article_fetched_on is None:
+            article_fetched_on = getattr(website, "last_fetched", None)
+        try:
+            article_fetched_on = int(article_fetched_on)
+        except (TypeError, ValueError):
+            article_fetched_on = getattr(website, "last_fetched", None)
+
+        st = json.dumps(
+            {
+                "user_id": self.user_id,
+                "tweet": post_text.replace('"', ""),
+                "emotions": [],
+                "hashtags": [],
+                "mentions": [],
+                "tid": tid,
+                "title": article_title,
+                "summary": article_summary,
+                "link": article_link,
+                "publisher": getattr(website, "name", ""),
+                "rss": getattr(website, "rss", ""),
+                "leaning": getattr(website, "leaning", ""),
+                "country": getattr(website, "country", ""),
+                "language": getattr(website, "language", ""),
+                "category": getattr(website, "category", ""),
+                "fetched_on": article_fetched_on,
+                "image_url": getattr(article, "image_url", None),
+            }
+        )
+
+        headers = {"Content-Type": "application/x-www-form-urlencoded"}
+        api_url = f"{self.base_url}/news"
+        res = post(f"{api_url}", headers=headers, data=st)
+        self._record_writing_action()
+        return res
+
+    @log_execution_time
+    def share_image(self, tid: int, image_post):
+        """
+        Share a standalone image without using the VLM stack.
+        """
+        if image_post is None:
+            return None
+
+        interests, interests_id = self.__get_interests(tid)
+        post_text = self.__clean_text("shared image")
+        if len(post_text) < 3:
+            post_text = "shared image"
+
+        st = json.dumps(
+            {
+                "user_id": self.user_id,
+                "tweet": post_text.replace('"', ""),
+                "image_url": image_post.url,
+                "image_description": image_post.description or "image description",
+                "emotions": [],
+                "hashtags": [],
+                "mentions": [],
+                "tid": tid,
+                "topics": interests,
+            }
+        )
+
+        headers = {"Content-Type": "application/x-www-form-urlencoded"}
+        api_url = f"{self.base_url}/image_post"
+        response = post(f"{api_url}", headers=headers, data=st)
+        self._record_writing_action()
+        if self.opinions_enabled and interests_id:
+            self._record_self_post_opinions(topic_ids=interests_id, tid=int(tid))
+        return response
 
     def __evaluate_follow(self, post_text, post_id, action, tid):
         """
@@ -646,6 +752,10 @@ class FakeAgent(Agent):
         faker = Faker()
         action = faker.random_element(actions)
 
+        # Forum keeps backward compatibility with older action labels.
+        if action == "NEWS":
+            action = "SHARE_LINK"
+
         if action == "COMMENT":
             candidates = json.loads(self.read())
             if len(candidates) > 0:
@@ -697,6 +807,16 @@ class FakeAgent(Agent):
             if len(candidates) > 0:
                 selected_post = random.sample(candidates, 1)
                 self.share(int(selected_post[0]), tid=tid)
+
+        elif action == "SHARE_LINK":
+            article, website = self.select_link(tid=tid)
+            if article and website and not isinstance(article, str):
+                self.share_link(tid=tid, article=article, website=website)
+
+        elif action == "SHARE_IMAGE":
+            image_post = self.select_standalone_image(tid=tid)
+            if image_post:
+                self.share_image(tid=tid, image_post=image_post)
 
         elif action == "CAST":
             candidates = json.loads(self.read())
@@ -774,15 +894,18 @@ class FakeAgent(Agent):
 
         :return: the response from the service
         """
+        current_session = self._current_db_session()
+        if current_session is None:
+            return "", ""
 
         # Select websites with the same leaning of the agent
         candidate_websites = (
-            session.query(Websites).filter(Websites.leaning == self.leaning).all()
+            current_session.query(Websites).filter(Websites.leaning == self.leaning).all()
         )
 
         # Select a random website
         if len(candidate_websites) == 0:
-            candidate_websites = session.query(Websites).all()
+            candidate_websites = current_session.query(Websites).all()
 
         if len(candidate_websites) == 0:
             return "", ""
@@ -803,7 +926,11 @@ class FakeAgent(Agent):
         :return: the response from the service
         """
         # randomly select an image from database
-        image = session.query(Images).order_by(func.random()).first()
+        current_session = self._current_db_session()
+        if current_session is None:
+            return None, None
+
+        image = current_session.query(Images).order_by(func.random()).first()
 
         # @Todo: add the case of no news sharing enabled
         if (
@@ -818,17 +945,15 @@ class FakeAgent(Agent):
                     return image, None
 
                 else:
-                    # annotate the image with a description
-                    # an = Annotator(config=self.llm_v_config)
-                    description = "image description"  # an.annotate(image.url)
+                    description = "image description"
 
                     if description is not None:
                         image.description = description
-                        session.commit()
+                        current_session.commit()
                     else:
                         # delete image
-                        session.delete(image)
-                        session.commit()
+                        current_session.delete(image)
+                        current_session.commit()
                         return None, None
 
                     return image, None
@@ -843,25 +968,23 @@ class FakeAgent(Agent):
                     return None, None
 
                 # get image given article id and set the remote id
-                image = session.query(Images).order_by(func.random()).first()
+                image = current_session.query(Images).order_by(func.random()).first()
 
                 if image is None:
                     return None, None
                 else:
                     image.remote_article_id = None
-                    session.commit()
+                    current_session.commit()
 
-                    # annotate the image with a description
-                    an = Annotator(self.llm_v_config)
-                    description = an.annotate(image.url)
+                    description = "image description"
 
                     if description is not None:
                         image.description = description
-                        session.commit()
+                        current_session.commit()
                     else:
                         # delete image
-                        session.delete(image)
-                        session.commit()
+                        current_session.delete(image)
+                        current_session.commit()
                         return None, None
 
                     return image, None
@@ -872,53 +995,38 @@ class FakeAgent(Agent):
                     return image, None
 
                 else:
-                    # annotate the image with a description
-                    an = Annotator(config=self.llm_v_config)
-                    description = an.annotate(image.url)
+                    description = "image description"
                     if description is not None:
                         image.description = description
-                        session.commit()
+                        current_session.commit()
+                        return image, None
                     else:
                         # delete image
-                        session.delete(image)
-                        session.commit()
+                        current_session.delete(image)
+                        current_session.commit()
                         return None, None
-
-                    return image, None
 
     @log_execution_time
     def comment_image(self, image: object, tid: int, article_id: int = None):
         """
-        Comment on an image
-
-        :param image:
-        :param tid:
-        :param article_id:
-        :return:
+        Comment on an image without using the VLM stack.
         """
-        # obtain the most recent (and frequent) interests of the agent
-        interests, _ = self.__get_interests(tid)
-
-        self.topics_opinions = ""
-
-        post_text = "comment"
-
-        # avoid posting empty messages
-        if len(post_text) < 3:
+        if image is None:
             return
+
+        post_text = self.__clean_text("image comment")
+        if len(post_text) < 3:
+            post_text = "image comment"
 
         st = json.dumps(
             {
                 "user_id": self.user_id,
-                "text": post_text.replace('"', "")
-                .replace(f"{self.name}", "")
-                .replace(":", "")
-                .replace("*", ""),
-                "emotions": None,
-                "hashtags": None,
+                "text": post_text.replace('"', ""),
+                "emotions": [],
+                "hashtags": [],
                 "tid": tid,
                 "image_url": image.url,
-                "image_description": image.description,
+                "image_description": image.description or "image description",
                 "article_id": article_id,
             }
         )
@@ -926,6 +1034,7 @@ class FakeAgent(Agent):
         headers = {"Content-Type": "application/x-www-form-urlencoded"}
         api_url = f"{self.base_url}/comment_image"
         post(f"{api_url}", headers=headers, data=st)
+        self._record_writing_action()
 
     def __str__(self):
         """
