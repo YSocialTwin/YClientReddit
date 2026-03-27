@@ -20,7 +20,7 @@ import random
 import re
 
 import numpy as np
-from autogen import AssistantAgent
+from y_client.llm import AssistantAgent
 from faker import Faker
 from requests import get, post
 from sqlalchemy.sql.expression import func

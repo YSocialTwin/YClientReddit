@@ -1,7 +1,15 @@
 from __future__ import annotations
 
-from yclient_memory import build_memory_engine  # type: ignore
-from yclient_memory.config import MemoryConfig  # type: ignore
+def _load_memory_package():
+    try:
+        from yclient_memory import build_memory_engine  # type: ignore
+        from yclient_memory.config import MemoryConfig  # type: ignore
+    except ImportError as exc:
+        raise RuntimeError(
+            "The external memory integration requires the pip package "
+            "'yclient-memory'. Install it before enabling agent memory."
+        ) from exc
+    return build_memory_engine, MemoryConfig
 
 
 class YClientRedditMemoryRuntime:
@@ -60,6 +68,7 @@ class YClientRedditMemoryRuntime:
 
 
 def build_agent_memory_engine(agent):
+    build_memory_engine, MemoryConfig = _load_memory_package()
     raw = {
         "memory_enabled": getattr(agent, "memory_enabled", True),
         "memory_backend": getattr(agent, "memory_backend", "hybrid_semantic"),

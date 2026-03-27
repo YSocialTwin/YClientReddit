@@ -46,6 +46,11 @@ def _load_base_agent_module():
     _stub_module("y_client.classes.time", SimulationSlot=type("SimulationSlot", (), {}))
     _stub_module("y_client.memory_runtime", build_agent_memory_engine=lambda *args, **kwargs: None)
     _stub_module(
+        "y_client.llm",
+        AssistantAgent=type("AssistantAgent", (), {}),
+        MultimodalConversableAgent=type("MultimodalConversableAgent", (), {}),
+    )
+    _stub_module(
         "yclient_memory.contracts",
         BrowseMemoryRequest=type("BrowseMemoryRequest", (), {}),
         CommentMemoryEvent=type("CommentMemoryEvent", (), {}),
@@ -54,7 +59,6 @@ def _load_base_agent_module():
         ReplyMemoryRequest=type("ReplyMemoryRequest", (), {}),
         VoteMemoryEvent=type("VoteMemoryEvent", (), {}),
     )
-    _stub_module("autogen", AssistantAgent=type("AssistantAgent", (), {}))
     _stub_module("sqlalchemy", text=lambda value: value)
     _stub_module("sqlalchemy.sql", __path__=[])
     _stub_module("sqlalchemy.sql.expression", func=object())

@@ -8,11 +8,9 @@ from sqlalchemy import text
 from y_client.news_feeds.feed_reader import NewsFeed
 from y_client.classes.time import SimulationSlot
 from y_client.memory_runtime import build_agent_memory_engine
-from yclient_memory.contracts import BrowseMemoryRequest, CommentMemoryEvent, PostMemoryEvent, PostStyleRequest, ReplyMemoryRequest, VoteMemoryEvent
 import random
 from requests import get, post
 import json
-from autogen import AssistantAgent
 import numpy as np
 import re
 import logging
@@ -21,6 +19,29 @@ import math
 import hashlib
 import os
 import sqlite3
+from y_client.llm import AssistantAgent
+
+try:
+    from yclient_memory.contracts import (
+        BrowseMemoryRequest,
+        CommentMemoryEvent,
+        PostMemoryEvent,
+        PostStyleRequest,
+        ReplyMemoryRequest,
+        VoteMemoryEvent,
+    )
+except ImportError:
+    class _MemoryContractFallback:
+        def __init__(self, **kwargs):
+            for key, value in kwargs.items():
+                setattr(self, key, value)
+
+    BrowseMemoryRequest = _MemoryContractFallback
+    CommentMemoryEvent = _MemoryContractFallback
+    PostMemoryEvent = _MemoryContractFallback
+    PostStyleRequest = _MemoryContractFallback
+    ReplyMemoryRequest = _MemoryContractFallback
+    VoteMemoryEvent = _MemoryContractFallback
 
 __all__ = ["Agent", "Agents"]
 

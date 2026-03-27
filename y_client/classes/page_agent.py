@@ -11,7 +11,7 @@ import json
 import re
 
 import numpy as np
-from autogen import AssistantAgent
+from y_client.llm import AssistantAgent
 from requests import post
 from y_client.classes.base_agent import Agent
 from y_client.logger import log_execution_time
