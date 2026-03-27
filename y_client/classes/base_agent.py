@@ -12114,9 +12114,15 @@ class Agent(object):
         text = str(text_value or "").strip()
         if not text:
             return False
-
-        tokens = [t for t in re.split(r"[\s,\[\]\(\)\{\}:;]+", text.lower()) if t]
-        if not tokens or len(tokens) > 8:
+        normalized = text.lower().strip()
+        normalized = re.sub(
+            r"\b(emotion|emotions|emotionlist|emotion_list|detected|elicited|selected|output|result|results)\b",
+            " ",
+            normalized,
+        )
+        normalized = normalized.replace("-", " ")
+        tokens = [t for t in re.split(r"[\s,\[\]\(\)\{\}:;,.]+", normalized) if t]
+        if not tokens or len(tokens) > 12:
             return False
         allowed = {
             str(e).strip().lower()
@@ -12125,7 +12131,31 @@ class Agent(object):
         }
         if not allowed:
             return False
-        return all(t in allowed for t in tokens)
+        if not all(t in allowed for t in tokens):
+            return False
+
+        # Treat compact label wrappers like "Emotion: joy" or "Emotions [joy, sad]"
+        # as emotion payloads too, not as generated post/comment text.
+        raw_tokens = [t for t in re.split(r"[\s,\[\]\(\)\{\}:;,.]+", text.lower()) if t]
+        non_emotion_tokens = [
+            t
+            for t in raw_tokens
+            if t not in allowed
+            and t
+            not in {
+                "emotion",
+                "emotions",
+                "emotionlist",
+                "emotion_list",
+                "detected",
+                "elicited",
+                "selected",
+                "output",
+                "result",
+                "results",
+            }
+        ]
+        return len(non_emotion_tokens) == 0
 
     def _extract_chat_messages(self, chat_owner, peer_agent):
         if chat_owner is None or peer_agent is None:
