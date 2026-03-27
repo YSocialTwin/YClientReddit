@@ -1,6 +1,5 @@
 import json
 import importlib.util
-import sqlite3
 import sys
 import types
 from pathlib import Path
@@ -25,7 +24,29 @@ def _identity_decorator(func=None, **kwargs):
 
 
 def _load_base_agent_module():
-    _stub_module("y_client", __path__=[])
+    preserved = {
+        name: sys.modules.get(name)
+        for name in (
+            "y_client",
+            "y_client.recsys",
+            "y_client.news_feeds",
+            "y_client.classes",
+            "y_client.recsys.ContentRecSys",
+            "y_client.recsys.FollowRecSys",
+            "y_client.news_feeds.client_modals",
+            "y_client.classes.annotator",
+            "y_client.logger",
+            "y_client.news_feeds.feed_reader",
+            "y_client.classes.time",
+            "y_client.memory_runtime",
+            "y_client.llm",
+            "yclient_memory.contracts",
+            "sqlalchemy",
+            "sqlalchemy.sql",
+            "sqlalchemy.sql.expression",
+        )
+    }
+    _stub_module("y_client", __path__=[str(ROOT / "y_client")])
     _stub_module("y_client.recsys", __path__=[])
     _stub_module("y_client.news_feeds", __path__=[])
     _stub_module("y_client.classes", __path__=[])
@@ -59,7 +80,7 @@ def _load_base_agent_module():
         ReplyMemoryRequest=type("ReplyMemoryRequest", (), {}),
         VoteMemoryEvent=type("VoteMemoryEvent", (), {}),
     )
-    _stub_module("sqlalchemy", text=lambda value: value)
+    _stub_module("sqlalchemy", text=lambda value: value, or_=lambda *args: args)
     _stub_module("sqlalchemy.sql", __path__=[])
     _stub_module("sqlalchemy.sql.expression", func=object())
 
@@ -74,6 +95,11 @@ def _load_base_agent_module():
     module = importlib.util.module_from_spec(spec)
     sys.modules[module_name] = module
     spec.loader.exec_module(module)
+    for name, original in preserved.items():
+        if original is None:
+            sys.modules.pop(name, None)
+        else:
+            sys.modules[name] = original
     return module
 
 
@@ -81,50 +107,13 @@ base_agent_module = _load_base_agent_module()
 Agent = base_agent_module.Agent
 
 
-def _make_db(path: Path):
-    conn = sqlite3.connect(path)
-    conn.execute(
-        """
-        CREATE TABLE rounds (
-            id INTEGER PRIMARY KEY,
-            day INTEGER,
-            hour INTEGER
-        )
-        """
-    )
-    conn.execute(
-        """
-        CREATE TABLE interests (
-            iid INTEGER PRIMARY KEY,
-            interest TEXT
-        )
-        """
-    )
-    conn.execute(
-        """
-        CREATE TABLE agent_opinion (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            agent_id INTEGER,
-            tid INTEGER,
-            topic_id INTEGER,
-            id_interacted_with INTEGER,
-            id_post INTEGER,
-            opinion REAL
-        )
-        """
-    )
-    conn.commit()
-    conn.close()
-
-
-def _bare_agent(db_path: Path):
+def _bare_agent():
     ag = Agent.__new__(Agent)
     ag.user_id = 7
     ag.name = "tester"
     ag.is_page = 0
     ag.interests = ["topic a", "topic b"]
     ag.opinions = {}
-    ag.experiment_db_path = str(db_path)
     ag.opinions_enabled = True
     ag.opinion_dynamics = {
         "enabled": True,
@@ -137,120 +126,116 @@ def _bare_agent(db_path: Path):
         },
     }
     ag.base_url = "http://example.test"
+    ag.joined_on = 1
     return ag
 
 
-def test_seed_initial_opinions_if_needed(tmp_path):
-    db_path = tmp_path / "opinions.db"
-    _make_db(db_path)
-
-    conn = sqlite3.connect(db_path)
-    conn.execute("INSERT INTO rounds (id, day, hour) VALUES (1, 0, 0)")
-    conn.execute("INSERT INTO interests (iid, interest) VALUES (1, 'topic a')")
-    conn.execute("INSERT INTO interests (iid, interest) VALUES (2, 'topic b')")
-    conn.commit()
-    conn.close()
-
-    ag = _bare_agent(db_path)
+def test_seed_initial_opinions_if_needed_uses_server_api(monkeypatch):
+    ag = _bare_agent()
     ag.opinions = {"topic a": 0.8, "topic b": 0.2}
 
+    calls = []
+
+    class _Resp:
+        def __init__(self, payload):
+            self.__dict__["_content"] = json.dumps(payload).encode("utf-8")
+
+    def _fake_post(url, headers=None, data=None):
+        payload = json.loads(data)
+        calls.append((url, payload))
+        if url.endswith("/get_user_opinions"):
+            return _Resp({})
+        if url.endswith("/set_user_opinions"):
+            return _Resp({"status": 200})
+        raise AssertionError(url)
+
+    monkeypatch.setattr(base_agent_module, "post", _fake_post)
     ag._seed_initial_opinions_if_needed()
 
-    conn = sqlite3.connect(db_path)
-    rows = conn.execute(
-        "SELECT topic_id, opinion, tid FROM agent_opinion WHERE agent_id = ? ORDER BY topic_id",
-        (ag.user_id,),
-    ).fetchall()
-    conn.close()
+    assert calls[0][0].endswith("/get_user_opinions")
+    assert calls[1][0].endswith("/set_user_opinions")
+    assert calls[1][1] == {
+        "user_id": 7,
+        "opinions": {"topic a": 0.8, "topic b": 0.2},
+        "round": 1,
+        "id_interacted_with": -1,
+        "id_post": -1,
+    }
 
-    assert rows == [(1, 0.8, 1), (2, 0.2, 1)]
 
-
-def test_new_opinions_updates_with_bounded_confidence(tmp_path, monkeypatch):
-    db_path = tmp_path / "opinions.db"
-    _make_db(db_path)
-
-    conn = sqlite3.connect(db_path)
-    conn.execute("INSERT INTO interests (iid, interest) VALUES (1, 'topic a')")
-    conn.execute(
-        """
-        INSERT INTO agent_opinion (agent_id, tid, topic_id, id_interacted_with, id_post, opinion)
-        VALUES (2, 4, 1, 2, 99, 0.6)
-        """
-    )
-    conn.commit()
-    conn.close()
-
-    ag = _bare_agent(db_path)
+def test_new_opinions_updates_with_bounded_confidence_via_server_api(monkeypatch):
+    ag = _bare_agent()
     ag.opinions = {"topic a": 0.2}
-    ag.get_user_from_post = lambda post_id: 2
+    ag.get_username_from_post = lambda post_id: (2, "author")
+
+    writes = []
 
     class _Resp:
         def __init__(self, payload):
             self.__dict__["_content"] = json.dumps(payload).encode("utf-8")
 
-    monkeypatch.setattr(base_agent_module, "get", lambda *args, **kwargs: _Resp([1]))
+    def _fake_post(url, headers=None, data=None):
+        payload = json.loads(data)
+        if url.endswith("/get_post_topics_name"):
+            return _Resp(["topic a"])
+        if url.endswith("/get_user_opinions"):
+            if payload["user_id"] == 2:
+                return _Resp({"topic a": [0.6, 1]})
+            return _Resp({})
+        if url.endswith("/set_user_opinions"):
+            writes.append(payload)
+            return _Resp({"status": 200})
+        raise AssertionError(url)
 
+    monkeypatch.setattr(base_agent_module, "post", _fake_post)
     ag.new_opinions(post_id=99, tid=5, text="reply")
 
-    assert round(ag.opinions["topic a"], 3) == 0.5
-
-    conn = sqlite3.connect(db_path)
-    row = conn.execute(
-        """
-        SELECT opinion, id_interacted_with, id_post
-        FROM agent_opinion
-        WHERE agent_id = ?
-        ORDER BY id DESC
-        LIMIT 1
-        """,
-        (ag.user_id,),
-    ).fetchone()
-    conn.close()
-
-    assert row == (0.5, 2, 99)
+    assert round(ag.opinions["topic a"], 3) == 0.4
+    assert writes == [
+        {
+            "user_id": 7,
+            "opinions": {"topic a": 0.4},
+            "round": 5,
+            "id_interacted_with": 2,
+            "id_post": 99,
+        }
+    ]
 
 
-def test_new_opinions_keeps_value_when_author_outside_confidence_bound(tmp_path, monkeypatch):
-    db_path = tmp_path / "opinions.db"
-    _make_db(db_path)
-
-    conn = sqlite3.connect(db_path)
-    conn.execute("INSERT INTO interests (iid, interest) VALUES (1, 'topic a')")
-    conn.execute(
-        """
-        INSERT INTO agent_opinion (agent_id, tid, topic_id, id_interacted_with, id_post, opinion)
-        VALUES (2, 4, 1, 2, 99, 0.95)
-        """
-    )
-    conn.commit()
-    conn.close()
-
-    ag = _bare_agent(db_path)
+def test_new_opinions_keeps_value_when_author_outside_confidence_bound(monkeypatch):
+    ag = _bare_agent()
     ag.opinions = {"topic a": 0.2}
-    ag.get_user_from_post = lambda post_id: 2
+    ag.get_username_from_post = lambda post_id: (2, "author")
 
     class _Resp:
         def __init__(self, payload):
             self.__dict__["_content"] = json.dumps(payload).encode("utf-8")
 
-    monkeypatch.setattr(base_agent_module, "get", lambda *args, **kwargs: _Resp([1]))
+    writes = []
 
+    def _fake_post(url, headers=None, data=None):
+        payload = json.loads(data)
+        if url.endswith("/get_post_topics_name"):
+            return _Resp(["topic a"])
+        if url.endswith("/get_user_opinions"):
+            if payload["user_id"] == 2:
+                return _Resp({"topic a": [0.95, 1]})
+            return _Resp({})
+        if url.endswith("/set_user_opinions"):
+            writes.append(payload)
+            return _Resp({"status": 200})
+        raise AssertionError(url)
+
+    monkeypatch.setattr(base_agent_module, "post", _fake_post)
     ag.new_opinions(post_id=99, tid=5, text="reply")
 
-    assert round(ag.opinions["topic a"], 3) == 0.2
-
-    conn = sqlite3.connect(db_path)
-    row = conn.execute(
-        """
-        SELECT opinion
-        FROM agent_opinion
-        WHERE agent_id = ?
-        ORDER BY id DESC
-        LIMIT 1
-        """,
-        (ag.user_id,),
-    ).fetchone()
-    conn.close()
-
-    assert row == (0.2,)
+    assert round(ag.opinions["topic a"], 3) == 0.1
+    assert writes == [
+        {
+            "user_id": 7,
+            "opinions": {"topic a": 0.1},
+            "round": 5,
+            "id_interacted_with": 2,
+            "id_post": 99,
+        }
+    ]
