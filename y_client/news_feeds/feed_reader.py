@@ -8,11 +8,7 @@ import time
 from urllib.parse import urlparse, urlunparse
 from bs4 import BeautifulSoup
 from typing import Optional, Dict
-try:
-    from .client_modals import Websites, Articles, Images, session
-except:
-    from y_client.clients.client_web import session
-    from .client_modals import Websites, Articles, Images
+from y_client import content_store
 import datetime
 
 # Domains to skip when fetching OG metadata (social media that requires auth or has no useful OG)
@@ -815,41 +811,15 @@ class News(object):
         :param name: the name of the website
         :param rss: the rss feed of the website
         """
-        website_id = (
-            session.query(Websites)
-            .filter(Websites.name == name, Websites.rss == rss)
-            .first()
-            .id
+        content_store.save_article(
+            website_name=name,
+            rss=rss,
+            title=self.title,
+            summary=self.summary,
+            published=self.published,
+            link=self.link,
+            image_url=self.image_url,
         )
-        # check if article exists
-        if (
-            session.query(Articles)
-            .filter(Articles.link == self.link, Articles.website_id == website_id)
-            .first()
-            is None
-        ):
-            art = Articles(
-                title=self.title,
-                summary=self.summary,
-                website_id=website_id,
-                fetched_on=self.published,
-                link=self.link,
-            )
-            session.add(art)
-            session.commit()
-
-        # get the article id
-        article_id = (
-            session.query(Articles)
-            .filter(Articles.link == self.link, Articles.website_id == website_id)
-            .first()
-            .id
-        )
-
-        if self.image_url is not None:
-            img = Images(url=self.image_url, article_id=article_id)
-            session.add(img)
-            session.commit()
 
 
 class NewsFeed(object):
@@ -907,7 +877,7 @@ class NewsFeed(object):
 
         try:
             # get website id
-            website = session.query(Websites).filter(Websites.name == self.name, Websites.rss == self.feed_url).first()
+            website = content_store.get_website(name=self.name, rss=self.feed_url)
             if not website:
                 print(f"Error: Website {self.name} with RSS {self.feed_url} not found in database")
                 return
@@ -994,13 +964,13 @@ class NewsFeed(object):
                     art.save(name=self.name, rss=self.feed_url)
 
                     # get article id to save image
-                    article_record = (
-                        session.query(Articles)
-                        .filter(
-                            Articles.link == entry_link,
-                            Articles.website_id == website_id,
-                        )
-                        .first()
+                    article_record = content_store.save_article(
+                        website_name=self.name,
+                        rss=self.feed_url,
+                        title=entry_title,
+                        summary=entry_summary,
+                        published=timestamp,
+                        link=entry_link,
                     )
                     if not article_record:
                         print(f"Warning: Article {entry_title} not found in database after save")
@@ -1011,10 +981,7 @@ class NewsFeed(object):
                     # Save image if we found one from OG/video metadata extraction
                     if img_url is not None:
                         # check if image is already in the database
-                        if session.query(Images).filter(Images.url == img_url).first() is None:
-                            img_record = Images(url=img_url, article_id=article_id)
-                            session.add(img_record)
-                            session.commit()
+                        if content_store.ensure_article_image(img_url, article_id) is not None:
                             stats["images_added"] += 1
 
                     self.news.append(art)
@@ -1026,7 +993,7 @@ class NewsFeed(object):
             # If no new articles were processed, load existing ones from database
             if stats["processed"] == 0:
                 # Get recent articles from this website (not just today)
-                articles = session.query(Articles).filter(Articles.website_id == website_id).order_by(Articles.id.desc()).limit(10).all()
+                articles = content_store.get_recent_articles_for_feed(self.name, self.feed_url, limit=10)
 
                 if articles:
                     print(f"Loading {len(articles)} existing articles from database")
@@ -1044,11 +1011,9 @@ class NewsFeed(object):
 
             # Record successful refresh time for this website.
             try:
-                website.last_fetched = timestamp
-                session.commit()
+                content_store.update_website_last_fetched(self.name, self.feed_url, timestamp)
             except Exception as e:
                 print(f"Error updating website last_fetched for {self.name}: {str(e)}")
-                session.rollback()
 
         except Exception as e:
             print(f"Critical error processing feed {self.name}: {str(e)}")
@@ -1100,11 +1065,9 @@ class NewsFeed(object):
             # Try to get articles from database
             try:
                 # Get website id
-                website = session.query(Websites).filter(Websites.name == self.name, Websites.rss == self.feed_url).first()
+                website = content_store.get_website(name=self.name, rss=self.feed_url)
                 if website:
-                    website_id = website.id
-                    # Get articles from this website
-                    articles = session.query(Articles).filter(Articles.website_id == website_id).order_by(Articles.id.desc()).limit(10).all()
+                    articles = content_store.get_recent_articles_for_feed(self.name, self.feed_url, limit=10)
 
                     if articles:
                         for art in articles:
@@ -1156,12 +1119,7 @@ class Feeds(object):
         :param url: the rss feed url
         :return: whether the feed is not in the database
         """
-        res = (
-            session.query(Websites)
-            .filter(Websites.name == name, Websites.rss == url)
-            .first()
-        )
-        return res is None
+        return not content_store.website_exists(name, url)
 
     def add_feed(
         self,
@@ -1210,7 +1168,7 @@ class Feeds(object):
                     )
 
                     # check if website exists
-                    web = Websites(
+                    content_store.ensure_website(
                         name=name,
                         rss=url_feed,
                         country=country or "Unknown",
@@ -1221,25 +1179,20 @@ class Feeds(object):
                         fetch_images_from_url=fetch_images_from_url,
                         fetch_images_timeout=fetch_images_timeout,
                     )
-                    session.add(web)
-                    session.commit()
                 else:
                     print(f"Feed validation failed: {name} ({url_feed})")
                     try:
-                        website = session.query(Websites).filter(Websites.name == name, Websites.rss == url_feed).first()
+                        website = content_store.get_website(name=name, rss=url_feed)
                         if website:
                             last_fetched = website.last_fetched
                             if timestamp > last_fetched:
-                                session.query(Websites).filter(
-                                    Websites.name == name, Websites.rss == url_feed
-                                ).update({"last_fetched": timestamp})
-                                session.commit()
+                                content_store.update_website_last_fetched(name, url_feed, timestamp)
                     except Exception as e:
                         print(f"Error updating last_fetched time: {str(e)}")
             else:
                 print(f"Feed already in database: {name} ({url_feed})")
                 try:
-                    website = session.query(Websites).filter(Websites.name == name, Websites.rss == url_feed).first()
+                    website = content_store.get_website(name=name, rss=url_feed)
                     if website:
                         # Add to current feed collection even if it's already in the database
                         # Use settings from database or provided values
@@ -1286,9 +1239,9 @@ class Feeds(object):
                             )
                         )
 
-                        web = Websites(
+                        content_store.ensure_website(
                             name=name,
-                            rss=rss,  # Fixed bug: was using url_feed here
+                            rss=rss,
                             country=country or "Unknown",
                             language=language or "en",
                             leaning=leaning or "center",
@@ -1297,8 +1250,6 @@ class Feeds(object):
                             fetch_images_from_url=fetch_images_from_url,
                             fetch_images_timeout=fetch_images_timeout,
                         )
-                        session.add(web)
-                        session.commit()
                     else:
                         print(f"Extracted feed validation failed: {name} ({rss})")
                 else:

@@ -7,12 +7,7 @@ import traceback
 import time
 import random
 from pathlib import Path
-from sqlalchemy.ext.declarative import declarative_base
-import sqlalchemy as db
 from requests import post
-from sqlalchemy import orm
-
-
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 sys.path.append(os.path.dirname(SCRIPT_DIR))
@@ -26,6 +21,15 @@ from y_client.classes.time import SimulationSlot
 from y_client.news_feeds import Feeds
 from y_client.news_feeds.client_modals import ImagePosts
 from y_client.clients.logging_utils import resolve_log_file_path
+from y_client.content_store import (
+    count_image_posts,
+    create_image_post,
+    delete_image_post,
+    get_bindings,
+    image_post_exists,
+    initialize_content_store,
+    update_image_post_local_path,
+)
 
 
 class YClientWeb(object):
@@ -106,44 +110,11 @@ class YClientWeb(object):
         self.visibility_rd = int(self.config["posts"]["visibility_rounds"])
 
         ##############
-        BASE_DIR = os.path.dirname(os.path.abspath(__file__)).split("y_client")[0]
-
-        # Check for PostgreSQL via environment variable or data_base_path
-        database_url = os.environ.get("DATABASE_URL")
-
-        if database_url and "postgresql" in database_url:
-            # PostgreSQL mode
-            db_uri = database_url
-            logging.info(f"Using PostgreSQL database: {db_uri}")
-        elif data_base_path and os.path.exists(f"{data_base_path}database_server.db"):
-            # Use the Y_Web experiment database (SQLite)
-            db_path = f"{data_base_path}database_server.db"
-            db_uri = f"sqlite:////{db_path}"
-            logging.info(f"Using Y_Web experiment database: {db_path}")
-        else:
-            # Fallback to standalone database (for backwards compatibility)
-            db_path = f"{BASE_DIR}experiments/{self.config['simulation']['name']}.db"
-            if not os.path.exists(db_path):
-                # copy the clean database to the experiments folder
-                shutil.copyfile(
-                    f"{BASE_DIR}data_schema/database_clean_client.db",
-                    db_path,
-                )
-            db_uri = f"sqlite:////{db_path}"
-            logging.info(f"Using standalone database: {db_path}")
-
         global session, engine, base
-        base = declarative_base()
-
-        # Create engine with appropriate options
-        if "postgresql" in db_uri:
-            from sqlalchemy.pool import NullPool
-            engine = db.create_engine(db_uri, poolclass=NullPool)
-        else:
-            engine = db.create_engine(db_uri, connect_args={"check_same_thread": False, "timeout": 30})
-        base.metadata.bind = engine
-        session = orm.scoped_session(orm.sessionmaker())(bind=engine)
-
+        session, engine, base = initialize_content_store(
+            data_base_path=data_base_path,
+            experiment_name=self.config["simulation"]["name"],
+        )
         globals()["session"] = session
         globals()["engine"] = engine
         globals()["base"] = base
@@ -327,10 +298,7 @@ class YClientWeb(object):
 
         try:
             # Check if image_posts table is empty
-            with engine.connect() as conn:
-                result = conn.execute(text("SELECT COUNT(*) FROM image_posts"))
-                count = result.scalar()
-
+            count = count_image_posts()
             if count > 0:
                 logging.info(f"image_posts table already has {count} images, skipping population")
                 return
@@ -404,13 +372,8 @@ class YClientWeb(object):
                             continue
 
                         # Check for duplicates
-                        with engine.connect() as conn:
-                            result = conn.execute(
-                                text("SELECT id FROM image_posts WHERE url = :url"),
-                                {"url": image_url}
-                            )
-                            if result.fetchone():
-                                continue
+                        if image_post_exists(image_url):
+                            continue
 
                         # Get high-res URL (with rate limiting delay)
                         source_url = entry.link if hasattr(entry, "link") else None
@@ -421,24 +384,16 @@ class YClientWeb(object):
                             time.sleep(1.0 + random.uniform(0, 1))
 
                         # Insert record to get ID
-                        with engine.begin() as conn:
-                            result = conn.execute(
-                                text("""
-                                    INSERT INTO image_posts (url, source_url, title, subreddit, fetched_on, used, high_res_url)
-                                    VALUES (:url, :source_url, :title, :subreddit, :fetched_on, false, :high_res_url)
-                                    RETURNING id
-                                """),
-                                {
-                                    "url": image_url,
-                                    "source_url": source_url,
-                                    "title": entry.title[:300] if hasattr(entry, "title") else "",
-                                    "subreddit": subreddit,
-                                    "fetched_on": timestamp,
-                                    "high_res_url": high_res_url,
-                                }
-                            )
-                            row = result.fetchone()
-                            image_id = row[0] if row else None
+                        image_row = create_image_post(
+                            url=image_url,
+                            source_url=source_url,
+                            title=entry.title[:300] if hasattr(entry, "title") else "",
+                            subreddit=subreddit,
+                            fetched_on=timestamp,
+                            used=False,
+                            high_res_url=high_res_url,
+                        )
+                        image_id = getattr(image_row, "id", None)
 
                         if image_id:
                             added += 1
@@ -452,22 +407,14 @@ class YClientWeb(object):
                             logging.info(f"  Downloading: {download_url[:60]}...")
                             ok, reason = download_image_checked(download_url, str(filepath))
                             if ok:
-                                with engine.begin() as conn:
-                                    conn.execute(
-                                        text("UPDATE image_posts SET local_path = :path WHERE id = :id"),
-                                        {"path": relative_path, "id": image_id}
-                                    )
+                                update_image_post_local_path(image_id, relative_path)
                                 downloaded += 1
                                 logging.info(f"    -> Saved to {relative_path}")
                             else:
                                 logging.warning(f"    -> Download failed ({reason})")
                                 # If we only got a tiny thumbnail, delete the row so it won't be selected for posts.
                                 if reason == "too_small":
-                                    with engine.begin() as conn:
-                                        conn.execute(
-                                            text("DELETE FROM image_posts WHERE id = :id"),
-                                            {"id": image_id},
-                                        )
+                                    delete_image_post(image_id)
                                     try:
                                         if filepath.exists():
                                             filepath.unlink()
@@ -566,7 +513,6 @@ class YClientWeb(object):
                     daily_activity_level=ag.get("daily_activity_level", 1),
                     activity_profile=ag.get("activity_profile", "Always On"),
                     opinions=ag.get("opinions"),
-                    experiment_db_path=os.path.join(self.base_path, "database_server.db"),
                 )
                 agent.set_prompts(self.prompts)
                 self.agents.add_agent(agent)
@@ -667,7 +613,6 @@ class YClientWeb(object):
                         config=self.config,
                         web=True,
                         opinions=a.get("opinions"),
-                        experiment_db_path=os.path.join(self.base_path, "database_server.db"),
                     )
                     ag.set_prompts(self.prompts)
                     ag.set_rec_sys(self.content_recsys, self.follow_recsys)

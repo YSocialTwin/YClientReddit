@@ -34,6 +34,7 @@ from y_client.news_feeds.client_modals import (
     Websites,
     session,
 )
+from y_client import content_store
 from y_client.news_feeds.feed_reader import NewsFeed
 from y_client.recsys.ContentRecSys import ContentRecSys
 from y_client.recsys.FollowRecSys import FollowRecSys
@@ -181,8 +182,8 @@ class FakeAgent(Agent):
 
         api_url = f"{self.base_url}/post"
         post(f"{api_url}", headers=headers, data=st)
-        if self.opinions_enabled and interests_id:
-            self._record_self_post_opinions(topic_ids=interests_id, tid=int(tid))
+        if self.opinions_enabled and interests:
+            self._record_self_post_opinions(topic_names=interests, tid=int(tid))
 
         # update topic of interest with the ones used to generate the post
         api_url = f"{self.base_url}/set_user_interests"
@@ -584,8 +585,8 @@ class FakeAgent(Agent):
         api_url = f"{self.base_url}/image_post"
         response = post(f"{api_url}", headers=headers, data=st)
         self._record_writing_action()
-        if self.opinions_enabled and interests_id:
-            self._record_self_post_opinions(topic_ids=interests_id, tid=int(tid))
+        if self.opinions_enabled and interests:
+            self._record_self_post_opinions(topic_names=interests, tid=int(tid))
         return response
 
     def __evaluate_follow(self, post_text, post_id, action, tid):
@@ -894,24 +895,9 @@ class FakeAgent(Agent):
 
         :return: the response from the service
         """
-        current_session = self._current_db_session()
-        if current_session is None:
+        website = content_store.get_random_website_by_leaning(self.leaning)
+        if website is None:
             return "", ""
-
-        # Select websites with the same leaning of the agent
-        candidate_websites = (
-            current_session.query(Websites).filter(Websites.leaning == self.leaning).all()
-        )
-
-        # Select a random website
-        if len(candidate_websites) == 0:
-            candidate_websites = current_session.query(Websites).all()
-
-        if len(candidate_websites) == 0:
-            return "", ""
-
-        # Select a random website from a list
-        website = np.random.choice(candidate_websites)
 
         # Select a random article
         website_feed = NewsFeed(website.name, website.rss)
@@ -926,11 +912,7 @@ class FakeAgent(Agent):
         :return: the response from the service
         """
         # randomly select an image from database
-        current_session = self._current_db_session()
-        if current_session is None:
-            return None, None
-
-        image = current_session.query(Images).order_by(func.random()).first()
+        image = content_store.get_random_image()
 
         # @Todo: add the case of no news sharing enabled
         if (
@@ -948,12 +930,9 @@ class FakeAgent(Agent):
                     description = "image description"
 
                     if description is not None:
-                        image.description = description
-                        current_session.commit()
+                        image = content_store.save_image_description(image.id, description)
                     else:
-                        # delete image
-                        current_session.delete(image)
-                        current_session.commit()
+                        content_store.delete_image(image.id)
                         return None, None
 
                     return image, None
@@ -968,23 +947,19 @@ class FakeAgent(Agent):
                     return None, None
 
                 # get image given article id and set the remote id
-                image = current_session.query(Images).order_by(func.random()).first()
+                image = content_store.get_random_image()
 
                 if image is None:
                     return None, None
                 else:
-                    image.remote_article_id = None
-                    current_session.commit()
+                    image = content_store.save_image_remote_article(image.id, None)
 
                     description = "image description"
 
                     if description is not None:
-                        image.description = description
-                        current_session.commit()
+                        image = content_store.save_image_description(image.id, description)
                     else:
-                        # delete image
-                        current_session.delete(image)
-                        current_session.commit()
+                        content_store.delete_image(image.id)
                         return None, None
 
                     return image, None
@@ -997,13 +972,10 @@ class FakeAgent(Agent):
                 else:
                     description = "image description"
                     if description is not None:
-                        image.description = description
-                        current_session.commit()
+                        image = content_store.save_image_description(image.id, description)
                         return image, None
                     else:
-                        # delete image
-                        current_session.delete(image)
-                        current_session.commit()
+                        content_store.delete_image(image.id)
                         return None, None
 
     @log_execution_time

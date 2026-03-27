@@ -16,7 +16,8 @@ sys.path.append(os.path.dirname(SCRIPT_DIR))
 from y_client import Agent, Agents, SimulationSlot
 from y_client.recsys import *
 from y_client.utils import generate_user
-from y_client.news_feeds import Feeds, session, Websites, Articles, Images
+from y_client.news_feeds import Feeds
+from y_client.content_store import initialize_content_store, reset_content_db
 
 admin_session = None
 admin_engine = None
@@ -47,6 +48,7 @@ class YClientBase(object):
 
         self.prompts = self._load_prompts_with_defaults(prompts_filename)
         self.config = json.load(open(config_filename, "r"))
+        initialize_content_store(experiment_name=self.config["simulation"]["name"])
         self.agents_owner = owner
         self.agents_filename = agents_filename
         self.agents_output = agents_output
@@ -142,10 +144,7 @@ class YClientBase(object):
         """
         Reset the news database
         """
-        session.query(Articles).delete()
-        session.query(Websites).delete()
-        session.query(Images).delete()
-        session.commit()
+        reset_content_db()
 
     def reset_experiment(self):
         """
