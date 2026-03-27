@@ -1,10 +1,14 @@
 from __future__ import annotations
 
+import base64
 from dataclasses import dataclass
+import json
+import mimetypes
 import os
 import re
 from typing import Any
 from urllib.parse import urlparse
+import requests
 
 
 _IMAGE_TAG_RE = re.compile(r"<img\s+([^>\s]+)\s*>", re.IGNORECASE)
@@ -100,10 +104,8 @@ def _build_chat_model(llm_config: dict | None):
     if _looks_like_ollama(cfg):
         try:
             from langchain_ollama import ChatOllama
-        except ImportError as exc:
-            raise RuntimeError(
-                "LangChain Ollama support is required for Ollama endpoints. Install `langchain-ollama`."
-            ) from exc
+        except Exception:
+            return None
 
         kwargs = {}
         if cfg.model:
@@ -118,10 +120,8 @@ def _build_chat_model(llm_config: dict | None):
 
     try:
         from langchain_openai import ChatOpenAI
-    except ImportError as exc:
-        raise RuntimeError(
-            "LangChain OpenAI support is required for OpenAI-compatible endpoints. Install `langchain-openai`."
-        ) from exc
+    except Exception:
+        return None
 
     kwargs = {}
     if cfg.model:
@@ -159,6 +159,13 @@ def _build_openai_client(llm_config: dict | None):
 
 
 def _extract_openai_content(response: Any) -> str:
+    if isinstance(response, dict):
+        try:
+            return _coerce_content_to_text(
+                response["choices"][0]["message"]["content"]
+            ).strip()
+        except Exception:
+            return _coerce_content_to_text(response)
     try:
         message = response.choices[0].message
     except Exception:
@@ -181,10 +188,76 @@ def _extract_openai_content(response: Any) -> str:
     return _coerce_content_to_text(content)
 
 
+def _chat_completions_url(base_url: str | None) -> str:
+    base = str(base_url or "").strip().rstrip("/")
+    if not base:
+        raise RuntimeError("LLM base_url is required")
+    if base.endswith("/chat/completions"):
+        return base
+    return f"{base}/chat/completions"
+
+
+def _image_url_to_data_url(image_url: str) -> str:
+    source = str(image_url or "").strip()
+    if not source or source.startswith("data:"):
+        return source
+    response = requests.get(
+        source,
+        timeout=120,
+        headers={
+            "User-Agent": (
+                "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+                "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
+            )
+        },
+    )
+    response.raise_for_status()
+    content_type = (response.headers.get("Content-Type") or "").split(";")[0].strip()
+    if not content_type:
+        guessed, _ = mimetypes.guess_type(source)
+        content_type = guessed or "image/jpeg"
+    encoded = base64.b64encode(response.content).decode("ascii")
+    return f"data:{content_type};base64,{encoded}"
+
+
+def _invoke_http_chat_completions(
+    *, llm_config: dict | None, messages: list[dict[str, Any]]
+) -> str:
+    cfg = _normalize_llm_config(llm_config)
+    payload: dict[str, Any] = {
+        "model": cfg.model,
+        "messages": messages,
+    }
+    if cfg.temperature is not None:
+        payload["temperature"] = cfg.temperature
+    if cfg.max_tokens is not None and int(cfg.max_tokens) > 0:
+        payload["max_tokens"] = int(cfg.max_tokens)
+
+    response = requests.post(
+        _chat_completions_url(cfg.base_url),
+        headers={
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {cfg.api_key or 'EMPTY'}",
+        },
+        data=json.dumps(payload),
+        timeout=cfg.timeout or 120,
+    )
+    response.raise_for_status()
+    return _extract_openai_content(response.json())
+
+
 def _invoke_openai_text_model(
     *, llm_config: dict | None, system_prompt: str, user_prompt: str
 ) -> str:
-    client, cfg = _build_openai_client(llm_config)
+    try:
+        client, cfg = _build_openai_client(llm_config)
+    except Exception:
+        messages = []
+        if system_prompt:
+            messages.append({"role": "system", "content": system_prompt})
+        messages.append({"role": "user", "content": user_prompt})
+        return _invoke_http_chat_completions(llm_config=llm_config, messages=messages)
+
     messages = []
     if system_prompt:
         messages.append({"role": "system", "content": system_prompt})
@@ -193,8 +266,8 @@ def _invoke_openai_text_model(
     kwargs: dict[str, Any] = {"model": cfg.model, "messages": messages}
     if cfg.temperature is not None:
         kwargs["temperature"] = cfg.temperature
-    if cfg.max_tokens is not None:
-        kwargs["max_tokens"] = cfg.max_tokens
+    if cfg.max_tokens is not None and int(cfg.max_tokens) > 0:
+        kwargs["max_tokens"] = int(cfg.max_tokens)
 
     response = client.chat.completions.create(**kwargs)
     return _extract_openai_content(response)
@@ -211,19 +284,26 @@ def _invoke_text_model(*, llm_config: dict | None, system_prompt: str, user_prom
 
     try:
         from langchain_core.messages import HumanMessage, SystemMessage
-    except ImportError:
+    except Exception:
         return _invoke_openai_text_model(
             llm_config=llm_config,
             system_prompt=system_prompt,
             user_prompt=user_prompt,
         )
 
-    messages = []
-    if system_prompt:
-        messages.append(SystemMessage(content=system_prompt))
-    messages.append(HumanMessage(content=user_prompt))
-    response = model.invoke(messages)
-    return _coerce_content_to_text(getattr(response, "content", response))
+    try:
+        messages = []
+        if system_prompt:
+            messages.append(SystemMessage(content=system_prompt))
+        messages.append(HumanMessage(content=user_prompt))
+        response = model.invoke(messages)
+        return _coerce_content_to_text(getattr(response, "content", response))
+    except Exception:
+        return _invoke_openai_text_model(
+            llm_config=llm_config,
+            system_prompt=system_prompt,
+            user_prompt=user_prompt,
+        )
 
 
 def _invoke_vision_model(
@@ -237,11 +317,23 @@ def _invoke_vision_model(
     match = _IMAGE_TAG_RE.search(user_prompt or "")
     image_url = match.group(1).strip() if match else ""
     cleaned_prompt = _IMAGE_TAG_RE.sub("", user_prompt or "").strip()
+    data_url = ""
+    if image_url:
+        try:
+            data_url = _image_url_to_data_url(image_url)
+        except Exception:
+            data_url = ""
+            cleaned_prompt = f"{cleaned_prompt}\nImage URL: {image_url}".strip()
     content = []
     if cleaned_prompt:
         content.append({"type": "text", "text": cleaned_prompt})
-    if image_url:
-        content.append({"type": "image_url", "image_url": {"url": image_url}})
+    if data_url:
+        content.append(
+            {
+                "type": "image_url",
+                "image_url": {"url": data_url},
+            }
+        )
 
     if model is None:
         client, cfg = _build_openai_client(llm_config)
@@ -259,7 +351,7 @@ def _invoke_vision_model(
 
     try:
         from langchain_core.messages import HumanMessage, SystemMessage
-    except ImportError:
+    except Exception:
         client, cfg = _build_openai_client(llm_config)
         messages = []
         if system_prompt:
@@ -268,17 +360,27 @@ def _invoke_vision_model(
         kwargs: dict[str, Any] = {"model": cfg.model, "messages": messages}
         if cfg.temperature is not None:
             kwargs["temperature"] = cfg.temperature
-        if cfg.max_tokens is not None:
+        if cfg.max_tokens is not None and int(cfg.max_tokens) > 0:
             kwargs["max_tokens"] = cfg.max_tokens
-        response = client.chat.completions.create(**kwargs)
-        return _extract_openai_content(response)
+        try:
+            response = client.chat.completions.create(**kwargs)
+            return _extract_openai_content(response)
+        except Exception:
+            return _invoke_http_chat_completions(llm_config=llm_config, messages=messages)
 
-    messages = []
-    if system_prompt:
-        messages.append(SystemMessage(content=system_prompt))
-    messages.append(HumanMessage(content=content or cleaned_prompt))
-    response = model.invoke(messages)
-    return _coerce_content_to_text(getattr(response, "content", response))
+    try:
+        messages = []
+        if system_prompt:
+            messages.append(SystemMessage(content=system_prompt))
+        messages.append(HumanMessage(content=content or cleaned_prompt))
+        response = model.invoke(messages)
+        return _coerce_content_to_text(getattr(response, "content", response))
+    except Exception:
+        messages = []
+        if system_prompt:
+            messages.append({"role": "system", "content": system_prompt})
+        messages.append({"role": "user", "content": content or cleaned_prompt})
+        return _invoke_http_chat_completions(llm_config=llm_config, messages=messages)
 
 
 class AssistantAgent:

@@ -82,6 +82,20 @@ def test_multimodal_agent_wraps_text_response(monkeypatch):
     assert vision_agent.chat_messages[user_proxy] == [{"content": [{"text": "vision result"}]}]
 
 
+def test_extract_openai_content_handles_dict_response():
+    response = {
+        "choices": [
+            {
+                "message": {
+                    "content": "POST",
+                }
+            }
+        ]
+    }
+
+    assert compat_module._extract_openai_content(response) == "POST"
+
+
 def test_build_chat_model_uses_chatollama_for_ollama_base(monkeypatch):
     fake_module = types.ModuleType("langchain_ollama")
 
