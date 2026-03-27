@@ -12115,6 +12115,42 @@ class Agent(object):
         if not text:
             return False
         normalized = text.lower().strip()
+        allowed = {
+            str(e).strip().lower()
+            for e in (self.emotions or [])
+            if str(e).strip()
+        }
+        if not allowed:
+            return False
+
+        # Catch verbose handler-style analysis outputs such as:
+        # "Here are the emotions identified in the text using the GoEmotions taxonomy..."
+        # Those are annotation payloads and must never be reused as post/comment text.
+        raw_tokens = [t for t in re.split(r"[\s,\[\]\(\)\{\}:;,.!?\n\r\t]+", normalized) if t]
+        marker_tokens = {
+            "emotion",
+            "emotions",
+            "emotionlist",
+            "emotion_list",
+            "detected",
+            "elicited",
+            "selected",
+            "output",
+            "result",
+            "results",
+            "identified",
+            "identify",
+            "annotation",
+            "annotate",
+            "taxonomy",
+            "goemotions",
+            "text",
+        }
+        emotion_token_count = sum(1 for t in raw_tokens if t in allowed)
+        marker_token_count = sum(1 for t in raw_tokens if t in marker_tokens)
+        if emotion_token_count >= 1 and marker_token_count >= 2:
+            return True
+
         normalized = re.sub(
             r"\b(emotion|emotions|emotionlist|emotion_list|detected|elicited|selected|output|result|results)\b",
             " ",
@@ -12123,13 +12159,6 @@ class Agent(object):
         normalized = normalized.replace("-", " ")
         tokens = [t for t in re.split(r"[\s,\[\]\(\)\{\}:;,.]+", normalized) if t]
         if not tokens or len(tokens) > 12:
-            return False
-        allowed = {
-            str(e).strip().lower()
-            for e in (self.emotions or [])
-            if str(e).strip()
-        }
-        if not allowed:
             return False
         if not all(t in allowed for t in tokens):
             return False
