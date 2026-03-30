@@ -916,8 +916,8 @@ class FakeAgent(Agent):
 
         # @Todo: add the case of no news sharing enabled
         if (
-            "news" not in self.actions_likelihood
-            or self.actions_likelihood["news"] == 0
+            "NEWS" not in self.actions_likelihood
+            or self.actions_likelihood["NEWS"] == 0
         ):
             if image is None:
                 # where to get the image from??
