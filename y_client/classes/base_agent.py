@@ -213,6 +213,9 @@ class Agent(object):
         else:
             self.emotions = config["posts"]["emotions"]
             self.actions_likelihood = config["simulation"]["actions_likelihood"]
+            self.emotion_annotation_enabled = bool(
+                config.get("simulation", {}).get("emotion_annotation", True)
+            )
             self.base_url = config["servers"]["api"]
             self.llm_base = config["servers"]["llm"]
             self.content_rec_sys_name = None
@@ -620,6 +623,9 @@ class Agent(object):
 
         self.emotions = config["posts"]["emotions"]
         self.actions_likelihood = config["simulation"]["actions_likelihood"]
+        self.emotion_annotation_enabled = bool(
+            config.get("simulation", {}).get("emotion_annotation", True)
+        )
         self.base_url = config["servers"]["api"]
         self.llm_base = config["servers"]["llm"]
         self.content_rec_sys_name = None
@@ -6890,6 +6896,15 @@ class Agent(object):
         except:
             pass
 
+    def _handler_auto_reply_turns(self):
+        return 1 if getattr(self, "emotion_annotation_enabled", True) else 0
+
+    def _extract_optional_emotion_eval(self, chat_owner, peer_agent):
+        if not getattr(self, "emotion_annotation_enabled", True):
+            return ""
+        emotion_raw = self._extract_emotion_chat_content(chat_owner, peer_agent)
+        return self.__clean_emotion(emotion_raw)
+
     def set_rec_sys(self, content_recsys, follow_recsys):
         """
         Set the recommendation systems.
@@ -7177,7 +7192,7 @@ class Agent(object):
                 name=f"Handler",
                 llm_config=fresh_config,
                 system_message=self.prompts["handler_instructions"],
-                max_consecutive_auto_reply=1,
+                max_consecutive_auto_reply=self._handler_auto_reply_turns(),
             )
 
             prompt = post_prompt
@@ -7201,8 +7216,7 @@ class Agent(object):
                 max_turns=1,
             )
 
-            emotion_raw = self._extract_emotion_chat_content(u2, u1)
-            emotion_eval = self.__clean_emotion(emotion_raw)
+            emotion_eval = self._extract_optional_emotion_eval(u2, u1)
 
             post_text = self._extract_generated_chat_content(
                 u2, u1, prompt_hint=prompt, skip_emotion_like=True
@@ -7403,7 +7417,7 @@ class Agent(object):
             name=f"Handler",
             llm_config=fresh_config,
             system_message=self.__effify(self.prompts["handler_instructions"]),
-            max_consecutive_auto_reply=1,
+            max_consecutive_auto_reply=self._handler_auto_reply_turns(),
         )
 
         link_prompt = self.__effify(
@@ -7416,8 +7430,7 @@ class Agent(object):
             max_turns=1,
         )
 
-        emotion_raw = self._extract_emotion_chat_content(u2, u1)
-        emotion_eval = self.__clean_emotion(emotion_raw)
+        emotion_eval = self._extract_optional_emotion_eval(u2, u1)
 
         post_text = self._extract_generated_chat_content(
             u2, u1, prompt_hint=link_prompt, skip_emotion_like=True
@@ -7634,8 +7647,7 @@ class Agent(object):
                 max_turns=1,
             )
 
-            emotion_raw = self._extract_emotion_chat_content(u2, u1)
-            emotion_eval = self.__clean_emotion(emotion_raw)
+            emotion_eval = self._extract_optional_emotion_eval(u2, u1)
 
             post_text = self._extract_generated_chat_content(
                 u2, u1, prompt_hint=image_prompt, skip_emotion_like=True
@@ -9893,7 +9905,7 @@ class Agent(object):
             name=f"Handler",
             llm_config=fresh_config,
             system_message=self.__effify(self.prompts["handler_instructions"]),
-            max_consecutive_auto_reply=1,
+            max_consecutive_auto_reply=self._handler_auto_reply_turns(),
         )
 
         conv_for_prompt = conv
@@ -9935,8 +9947,7 @@ class Agent(object):
             max_turns=1,
         )
 
-        emotion_raw = self._extract_emotion_chat_content(u2, u1)
-        emotion_eval = self.__clean_emotion(emotion_raw)
+        emotion_eval = self._extract_optional_emotion_eval(u2, u1)
 
         post_text = self._extract_generated_chat_content(
             u2, u1, prompt_hint=comment_prompt, skip_emotion_like=True
@@ -10240,7 +10251,7 @@ class Agent(object):
             name=f"Handler",
             llm_config=fresh_config,
             system_message=self.__effify(self.prompts["handler_instructions"]),
-            max_consecutive_auto_reply=1,
+            max_consecutive_auto_reply=self._handler_auto_reply_turns(),
         )
 
         share_prompt = self.__effify(
@@ -10257,8 +10268,7 @@ class Agent(object):
             max_turns=1,
         )
 
-        emotion_raw = self._extract_emotion_chat_content(u2, u1)
-        emotion_eval = self.__clean_emotion(emotion_raw)
+        emotion_eval = self._extract_optional_emotion_eval(u2, u1)
 
         post_text = self._extract_generated_chat_content(
             u2, u1, prompt_hint=share_prompt, skip_emotion_like=True
@@ -11770,7 +11780,7 @@ class Agent(object):
             name=f"Handler",
             llm_config=fresh_config,
             system_message=self.__effify(self.prompts["handler_instructions"]),
-            max_consecutive_auto_reply=1,
+            max_consecutive_auto_reply=self._handler_auto_reply_turns(),
         )
 
         comment_image_prompt = self.__effify(
@@ -11783,8 +11793,7 @@ class Agent(object):
             max_turns=1,
         )
 
-        emotion_raw = self._extract_emotion_chat_content(u2, u1)
-        emotion_eval = self.__clean_emotion(emotion_raw)
+        emotion_eval = self._extract_optional_emotion_eval(u2, u1)
 
         post_text = self._extract_generated_chat_content(
             u2, u1, prompt_hint=comment_image_prompt, skip_emotion_like=True
@@ -11943,6 +11952,28 @@ class Agent(object):
         emotion_token_count = sum(1 for t in raw_tokens if t in allowed)
         marker_token_count = sum(1 for t in raw_tokens if t in marker_tokens)
         if emotion_token_count >= 1 and marker_token_count >= 2:
+            return True
+
+        lines = [line.strip(" -*\t") for line in re.split(r"[\n\r]+", text) if line.strip()]
+        line_starts_with_emotion = 0
+        for line in lines:
+            first = re.split(r"[\s,:;.!?()\[\]\{\}-]+", line.lower().strip(), maxsplit=1)[0]
+            if first in allowed:
+                line_starts_with_emotion += 1
+        if len(lines) >= 2 and line_starts_with_emotion >= 2:
+            return True
+
+        clauses = [
+            clause.strip()
+            for clause in re.split(r"(?<=[.!?])\s+|\n+", normalized)
+            if clause.strip()
+        ]
+        clause_starts_with_emotion = 0
+        for clause in clauses:
+            first = re.split(r"[\s,:;.!?()\[\]\{\}-]+", clause, maxsplit=1)[0]
+            if first in allowed:
+                clause_starts_with_emotion += 1
+        if len(clauses) >= 3 and clause_starts_with_emotion >= 3:
             return True
 
         normalized = re.sub(
