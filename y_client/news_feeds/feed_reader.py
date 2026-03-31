@@ -5,6 +5,7 @@ import numpy as np
 import json
 import requests, re
 import time
+from types import SimpleNamespace
 from urllib.parse import urlparse, urlunparse
 from bs4 import BeautifulSoup
 from typing import Optional, Dict
@@ -523,6 +524,97 @@ def _build_feed_fallback_urls(feed_url: str) -> list[str]:
     return deduped
 
 
+def _looks_like_reddit_listing_json(feed_url: str, response) -> bool:
+    if not _is_reddit_url(feed_url):
+        return False
+
+    parsed = urlparse(feed_url)
+    if parsed.path.lower().endswith(".json"):
+        return True
+
+    content_type = str(response.headers.get("Content-Type", "")).lower()
+    return "application/json" in content_type
+
+
+def _normalize_reddit_listing_link(post_data: dict) -> str | None:
+    candidates = [
+        post_data.get("url_overridden_by_dest"),
+        post_data.get("url"),
+    ]
+    for candidate in candidates:
+        candidate = str(candidate or "").strip()
+        if candidate:
+            return candidate
+
+    permalink = str(post_data.get("permalink") or "").strip()
+    if permalink:
+        if permalink.startswith("/"):
+            return f"https://www.reddit.com{permalink}"
+        return permalink
+    return None
+
+
+def _parse_reddit_listing_json_feed(feed_url: str, response_text: str):
+    try:
+        payload = json.loads(response_text)
+    except Exception:
+        return None
+
+    if not isinstance(payload, dict):
+        return None
+
+    data = payload.get("data")
+    if not isinstance(data, dict):
+        return None
+
+    children = data.get("children")
+    if not isinstance(children, list):
+        return None
+
+    parsed = urlparse(feed_url)
+    subreddit = ""
+    parts = [part for part in parsed.path.split("/") if part]
+    if len(parts) >= 2 and parts[0].lower() == "r":
+        subreddit = parts[1].strip()
+
+    entries = []
+    for child in children:
+        if not isinstance(child, dict):
+            continue
+        post_data = child.get("data")
+        if not isinstance(post_data, dict):
+            continue
+
+        link = _normalize_reddit_listing_link(post_data)
+        title = str(post_data.get("title") or "").strip()
+        if not link or not title:
+            continue
+
+        summary = str(
+            post_data.get("selftext")
+            or post_data.get("selftext_html")
+            or post_data.get("public_description")
+            or ""
+        ).strip()
+
+        entries.append(
+            SimpleNamespace(
+                link=link,
+                title=title,
+                summary=summary,
+                content=[],
+            )
+        )
+
+    feed_title = f"r/{subreddit}" if subreddit else parsed.netloc or feed_url
+    return SimpleNamespace(
+        entries=entries,
+        bozo=False,
+        feed={"title": feed_title, "link": feed_url},
+        href=feed_url,
+    )
+
+
 def parse_feed_with_retry(
     feed_url: str,
     timeout: int = 20,
@@ -572,6 +664,15 @@ def parse_feed_with_retry(
                 if not response.text:
                     last_error = "Empty response"
                     continue
+                if _looks_like_reddit_listing_json(url, response):
+                    feed = _parse_reddit_listing_json_feed(url, response.text)
+                    if feed is None:
+                        last_error = "Invalid Reddit JSON feed"
+                        continue
+                    if require_entries and (not getattr(feed, "entries", None) or len(feed.entries) == 0):
+                        last_error = "No entries"
+                        continue
+                    return feed, url, None
                 feed = feedparser.parse(response.text)
                 if getattr(feed, "bozo", False) and not getattr(feed, "entries", None):
                     last_error = getattr(feed, "bozo_exception", "bozo_error")
