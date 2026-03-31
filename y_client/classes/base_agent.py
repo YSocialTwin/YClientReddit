@@ -7634,7 +7634,7 @@ class Agent(object):
                 name=f"Handler",
                 llm_config=fresh_config,
                 system_message=self.__effify(self.prompts["handler_instructions"]),
-                max_consecutive_auto_reply=1,
+                max_consecutive_auto_reply=self._handler_auto_reply_turns(),
             )
 
             image_prompt = self.__effify(
@@ -12126,9 +12126,36 @@ class Agent(object):
             .lstrip()
         )
         text = self._strip_prompt_scaffold(text)
+        text = self._strip_trailing_emotion_fragment(text)
         text = text.replace(f"@{self.name}", "")
         text = re.sub(r"\n{3,}", "\n\n", text).strip()
         return text
+
+    def _strip_trailing_emotion_fragment(self, text):
+        cleaned = str(text or "").strip()
+        if not cleaned:
+            return ""
+
+        allowed = {
+            str(e).strip().lower()
+            for e in (self.emotions or [])
+            if str(e).strip()
+        }
+        if not allowed:
+            return cleaned
+
+        match = re.search(r"(\s*[\(\[]?\s*[a-z ,]+)\s*$", cleaned, re.IGNORECASE)
+        if not match:
+            return cleaned
+
+        suffix = match.group(1).strip("()[] \t\r\n").lower()
+        if not suffix:
+            return cleaned
+
+        tokens = [tok for tok in re.split(r"[\s,]+", suffix) if tok]
+        if tokens and all(tok in allowed for tok in tokens):
+            return cleaned[: match.start(1)].rstrip(" -–,;:(").rstrip()
+        return cleaned
 
 
 class Agents(object):

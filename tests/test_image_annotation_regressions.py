@@ -89,3 +89,15 @@ def test_select_image_uses_uppercase_news_action_key(monkeypatch):
     assert article_id == 44
     assert selected_image.description == "described image"
     assert selected_image.remote_article_id == 44
+
+
+def test_clean_text_strips_trailing_emotion_fragments():
+    agent = Agent.__new__(Agent)
+    agent.name = "tommy96"
+    agent.emotions = ["fear", "anger", "joy", "sadness"]
+
+    cleaned = agent._Agent__clean_text(
+        "found this gem at a congressional hearing yesterday, (fear, anger"
+    )
+
+    assert cleaned == "found this gem at a congressional hearing yesterday"
