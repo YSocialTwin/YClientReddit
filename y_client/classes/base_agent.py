@@ -476,6 +476,42 @@ class Agent(object):
             return []
         return [str(topic) for topic in payload if str(topic).strip()]
 
+    def _get_active_system_messages(self, tid):
+        response = self._post_json_api(
+            "get_active_system_messages",
+            {"user_id": int(self.user_id), "tid": int(tid)},
+        )
+        payload = self._decode_json_response(response, default=[])
+        if not isinstance(payload, list):
+            return []
+        normalized = []
+        for item in payload:
+            if not isinstance(item, dict):
+                continue
+            message_text = str(item.get("message") or "").strip()
+            if not message_text:
+                continue
+            normalized.append(
+                {
+                    "type": str(item.get("type") or "system").strip() or "system",
+                    "message": message_text,
+                }
+            )
+        return normalized
+
+    def _append_system_messages_to_prompt(self, *, base_prompt: str, tid: int):
+        messages = self._get_active_system_messages(tid)
+        if not messages:
+            return base_prompt
+
+        rendered = ["Active system messages addressed to you for this round."]
+        rendered.append(
+            "These are mandatory platform or moderator instructions for the content you are about to write. Follow them exactly."
+        )
+        for item in messages:
+            rendered.append(f"- [{item['type']}] {item['message']}")
+        return f"{base_prompt}\n\n" + "\n".join(rendered)
+
     def _build_current_opinion_payload(self, topic_names, fallback_value=None):
         if not topic_names:
             return {}
@@ -7194,6 +7230,11 @@ class Agent(object):
                     + ". Pick a different angle or different interest."
                 )
 
+            prompt = self._append_system_messages_to_prompt(
+                base_prompt=prompt,
+                tid=int(tid),
+            )
+
             u2.initiate_chat(
                 u1,
                 message=prompt,
@@ -9928,6 +9969,10 @@ class Agent(object):
             proactive_affect_block=proactive_affect_block,
             memory_usage_requirement=memory_usage_requirement,
         )
+        comment_prompt = self._append_system_messages_to_prompt(
+            base_prompt=comment_prompt,
+            tid=int(tid),
+        )
         u2.initiate_chat(
             u1,
             message=comment_prompt,
@@ -10476,6 +10521,77 @@ class Agent(object):
             except Exception:
                 pass
 
+    def _extract_report_type(self, text):
+        if not isinstance(text, str):
+            return None
+        tokens = set(re.findall(r"[A-Z_]+", text.upper()))
+        if "REPORT_TOXIC" in tokens or ("REPORT" in tokens and "TOXIC" in tokens):
+            return "toxic"
+        if "REPORT_OFFENSIVE" in tokens or ("REPORT" in tokens and "OFFENSIVE" in tokens):
+            return "offensive"
+        return None
+
+    def _decide_report_type(self, post_text):
+        u1 = AssistantAgent(
+            name=f"{self.name}",
+            llm_config=self.llm_config,
+            system_message=self.__effify(self.prompts["agent_roleplay_simple"]),
+            max_consecutive_auto_reply=1,
+        )
+
+        u2 = AssistantAgent(
+            name="ModeratorHandler",
+            llm_config=self.llm_config,
+            system_message=(
+                "Read the content and decide whether it should be reported for moderation. "
+                "Reply with exactly one label: REPORT_TOXIC, REPORT_OFFENSIVE, or NONE."
+            ),
+            max_consecutive_auto_reply=0,
+        )
+
+        try:
+            u2.initiate_chat(
+                u1,
+                message=(
+                    "Classify the following content for moderation. "
+                    "Use REPORT_TOXIC for hateful, threatening, abusive, or toxic content. "
+                    "Use REPORT_OFFENSIVE for insulting, vulgar, or norm-breaking content that "
+                    "is offensive but not necessarily toxic. Use NONE otherwise.\n\n"
+                    f"##TEXT START##\n{post_text}\n##TEXT END##"
+                ),
+                silent=True,
+                max_turns=1,
+            )
+            text = (u1.chat_messages[u2][-1]["content"] or "").strip()
+        except Exception:
+            text = ""
+        finally:
+            u1.reset()
+            u2.reset()
+
+        return self._extract_report_type(text)
+
+    @log_execution_time
+    def report(self, post_id: int, tid: int):
+        post_text = self.__get_post(post_id)
+        report_type = self._decide_report_type(post_text)
+        if report_type is None:
+            return None
+
+        st = json.dumps(
+            {
+                "user_id": self.user_id,
+                "post_id": int(post_id),
+                "type": report_type,
+                "tid": int(tid),
+            }
+        )
+
+        headers = {"Content-Type": "application/x-www-form-urlencoded"}
+        api_url = f"{self.base_url}/report"
+        post(f"{api_url}", headers=headers, data=st)
+        return report_type
+
     def vote(self, post_id: int, tid: int, vote_type: str) -> bool:
         """
         Cast an explicit upvote/downvote (like/dislike) without an additional LLM step.
@@ -10795,7 +10911,9 @@ class Agent(object):
             candidates = json.loads(self.read())
             try:
                 selected_post = random.sample(candidates, min(1, len(candidates)))
-                self.reaction(int(selected_post[0]), tid=tid)
+                selected_post_id = int(selected_post[0])
+                self.reaction(selected_post_id, tid=tid)
+                self.report(selected_post_id, tid=tid)
             except:
                 pass
 
