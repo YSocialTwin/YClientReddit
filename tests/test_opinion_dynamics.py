@@ -57,6 +57,10 @@ def _load_base_agent_module():
         Websites=type("Websites", (), {}),
         Images=type("Images", (), {}),
         Articles=type("Articles", (), {}),
+        base=object(),
+        get_engine=lambda: None,
+        get_session=lambda: None,
+        initialize_client_db=lambda **kwargs: None,
         session=None,
         Agent_Custom_Prompt=type("Agent_Custom_Prompt", (), {}),
         ImagePosts=type("ImagePosts", (), {}),
@@ -127,6 +131,8 @@ def _bare_agent():
     }
     ag.base_url = "http://example.test"
     ag.joined_on = 1
+    ag.stubborn_topics = set()
+    ag.custom_features = {}
     return ag
 
 
@@ -160,6 +166,7 @@ def test_seed_initial_opinions_if_needed_uses_server_api(monkeypatch):
         "round": 1,
         "id_interacted_with": -1,
         "id_post": -1,
+        "stubborn_topics": [],
     }
 
 
@@ -198,6 +205,7 @@ def test_new_opinions_updates_with_bounded_confidence_via_server_api(monkeypatch
             "round": 5,
             "id_interacted_with": 2,
             "id_post": 99,
+            "stubborn_topics": [],
         }
     ]
 
@@ -237,5 +245,64 @@ def test_new_opinions_keeps_value_when_author_outside_confidence_bound(monkeypat
             "round": 5,
             "id_interacted_with": 2,
             "id_post": 99,
+            "stubborn_topics": [],
         }
     ]
+
+
+def test_seed_initial_opinions_includes_stubborn_topics(monkeypatch):
+    ag = _bare_agent()
+    ag.opinions = {"topic a": 0.8, "topic b": 0.2}
+    ag.stubborn_topics = {"topic a"}
+
+    calls = []
+
+    class _Resp:
+        def __init__(self, payload):
+            self.__dict__["_content"] = json.dumps(payload).encode("utf-8")
+
+    def _fake_post(url, headers=None, data=None):
+        payload = json.loads(data)
+        calls.append((url, payload))
+        if url.endswith("/get_user_opinions"):
+            return _Resp({})
+        if url.endswith("/set_user_opinions"):
+            return _Resp({"status": 200})
+        raise AssertionError(url)
+
+    monkeypatch.setattr(base_agent_module, "post", _fake_post)
+    ag._seed_initial_opinions_if_needed()
+
+    assert calls[1][1]["stubborn_topics"] == ["topic a"]
+
+
+def test_new_opinions_skips_stubborn_topics(monkeypatch):
+    ag = _bare_agent()
+    ag.opinions = {"topic a": 0.2}
+    ag.stubborn_topics = {"topic a"}
+    ag.get_username_from_post = lambda post_id: (2, "author")
+
+    writes = []
+
+    class _Resp:
+        def __init__(self, payload):
+            self.__dict__["_content"] = json.dumps(payload).encode("utf-8")
+
+    def _fake_post(url, headers=None, data=None):
+        payload = json.loads(data)
+        if url.endswith("/get_post_topics_name"):
+            return _Resp(["topic a"])
+        if url.endswith("/get_user_opinions"):
+            if payload["user_id"] == 2:
+                return _Resp({"topic a": [0.6, 1]})
+            return _Resp({})
+        if url.endswith("/set_user_opinions"):
+            writes.append(payload)
+            return _Resp({"status": 200})
+        raise AssertionError(url)
+
+    monkeypatch.setattr(base_agent_module, "post", _fake_post)
+    ag.new_opinions(post_id=99, tid=5, text="reply")
+
+    assert ag.opinions["topic a"] == 0.2
+    assert writes == []

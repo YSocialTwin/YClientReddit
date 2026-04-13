@@ -115,15 +115,35 @@ if __name__ == "__main__":
     content_recsys = getattr(y_client.recsys, args.crecsys)()
     follow_recsys = getattr(y_client.recsys, args.frecsys)(leaning_bias=1.5)
 
-    # get and instantiate the client
-    experiment = getattr(y_client.clients, client_name)(
-        config_file,
-        prompts_file,
-        agents_filename=agents_file,
-        owner=agents_owner,
-        agents_output=output,
-        graph_file=graph_file,
-    )
+    ExperimentClass = getattr(y_client.clients, client_name)
+
+    if client_name == "YClientWeb":
+        data_base_path = os.path.abspath(os.path.dirname(prompts_file))
+        if graph_file:
+            graph_file = os.path.abspath(graph_file)
+            graph_target = os.path.join(data_base_path, os.path.basename(graph_file))
+            if graph_target != graph_file:
+                shutil.copyfile(graph_file, graph_target)
+            graph_file = os.path.basename(graph_target)
+
+        experiment = ExperimentClass(
+            config_file=config,
+            data_base_path=f"{data_base_path}{os.sep}",
+            agents_filename=agents_file,
+            owner=agents_owner,
+            agents_output=output,
+            first_run=bool(args.agents is None),
+            network=graph_file,
+        )
+    else:
+        experiment = ExperimentClass(
+            config_file,
+            prompts_file,
+            agents_filename=agents_file,
+            owner=agents_owner,
+            agents_output=output,
+            graph_file=graph_file,
+        )
 
     if args.reset:
         print("Resetting experiment...")
@@ -153,11 +173,20 @@ if __name__ == "__main__":
     if proceed_with_simulation:
         print("\nInitializing agent population...")
         if args.agents is None:
-            experiment.create_initial_population()
+            if client_name == "YClientWeb":
+                experiment.read_agents()
+            else:
+                experiment.create_initial_population()
         else:
             experiment.load_existing_agents(args.agents)
 
-        experiment.save_agents()
+        if graph_file and hasattr(experiment, "add_network"):
+            experiment.add_network()
+
+        if client_name == "YClientWeb":
+            experiment.save_agents(output)
+        else:
+            experiment.save_agents()
         print("\nStarting simulation...")
         experiment.run_simulation()
     else:

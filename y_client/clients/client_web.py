@@ -513,6 +513,8 @@ class YClientWeb(object):
                     daily_activity_level=ag.get("daily_activity_level", 1),
                     activity_profile=ag.get("activity_profile", "Always On"),
                     opinions=ag.get("opinions"),
+                    stubborn_topics=ag.get("stubborn_topics"),
+                    custom_features=ag.get("custom_features"),
                 )
                 agent.set_prompts(self.prompts)
                 self.agents.add_agent(agent)
@@ -613,6 +615,8 @@ class YClientWeb(object):
                         config=self.config,
                         web=True,
                         opinions=a.get("opinions"),
+                        stubborn_topics=a.get("stubborn_topics"),
+                        custom_features=a.get("custom_features"),
                     )
                     ag.set_prompts(self.prompts)
                     ag.set_rec_sys(self.content_recsys, self.follow_recsys)
