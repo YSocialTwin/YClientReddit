@@ -67,6 +67,26 @@ class Agent_Custom_Prompt(base):
     prompt = db.Column(db.TEXT, nullable=False)
 
 
+class StressReward(base):
+    __tablename__ = "stress_reward"
+    __table_args__ = (
+        db.CheckConstraint(
+            "variable IN ('stress', 'reward')", name="ck_stress_reward_variable"
+        ),
+        db.CheckConstraint(
+            "type IN ('aggregate', 'variation')", name="ck_stress_reward_type"
+        ),
+        db.CheckConstraint("value >= 0 AND value <= 1", name="ck_stress_reward_value"),
+    )
+
+    id = db.Column(db.String(36), primary_key=True)
+    uid = db.Column(db.Integer, db.ForeignKey("user_mgmt.id"), nullable=False, index=True)
+    variable = db.Column(db.String(16), nullable=False)
+    value = db.Column(db.Float, nullable=False)
+    type = db.Column(db.String(16), nullable=False)
+    tid = db.Column(db.Integer, db.ForeignKey("rounds.id"), nullable=False, index=True)
+
+
 def _legacy_default_db_path():
     base_dir = os.path.dirname(os.path.abspath(__file__))
     database_url = os.environ.get("CONTENT_DATABASE_URL")
@@ -105,6 +125,29 @@ def _ensure_sqlite_schema_compatibility():
 
     try:
         with engine.begin() as conn:
+            conn.execute(
+                text(
+                    """
+                    CREATE TABLE IF NOT EXISTS stress_reward (
+                        id VARCHAR(36) PRIMARY KEY,
+                        uid INTEGER NOT NULL,
+                        variable VARCHAR(16) NOT NULL,
+                        value FLOAT NOT NULL,
+                        type VARCHAR(16) NOT NULL,
+                        tid INTEGER NOT NULL,
+                        FOREIGN KEY(uid) REFERENCES user_mgmt(id),
+                        FOREIGN KEY(tid) REFERENCES rounds(id),
+                        CONSTRAINT ck_stress_reward_variable
+                            CHECK (variable IN ('stress', 'reward')),
+                        CONSTRAINT ck_stress_reward_type
+                            CHECK (type IN ('aggregate', 'variation')),
+                        CONSTRAINT ck_stress_reward_value
+                            CHECK (value >= 0 AND value <= 1)
+                    )
+                    """
+                )
+            )
+
             conn.execute(
                 text(
                     """
