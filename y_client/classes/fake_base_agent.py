@@ -183,7 +183,7 @@ class FakeAgent(Agent):
         api_url = f"{self.base_url}/post"
         post(f"{api_url}", headers=headers, data=st)
         if self.opinions_enabled and interests:
-            self._record_self_post_opinions(topic_names=interests, tid=int(tid))
+            self._record_self_post_opinions(topic_ids=interests_id, tid=int(tid))
 
         # update topic of interest with the ones used to generate the post
         api_url = f"{self.base_url}/set_user_interests"
@@ -586,8 +586,31 @@ class FakeAgent(Agent):
         response = post(f"{api_url}", headers=headers, data=st)
         self._record_writing_action()
         if self.opinions_enabled and interests:
-            self._record_self_post_opinions(topic_names=interests, tid=int(tid))
+            self._record_self_post_opinions(topic_ids=interests_id, tid=int(tid))
         return response
+
+    def _resolve_website(self, website):
+        current_session = self._current_db_session()
+        if current_session is None or website is None or getattr(website, "id", None) is None:
+            return website
+        refreshed = current_session.query(Websites).filter_by(id=website.id).first()
+        current_session.commit()
+        return refreshed or website
+
+    def _resolve_image(self, image):
+        current_session = self._current_db_session()
+        if current_session is None or image is None or getattr(image, "id", None) is None:
+            return image
+        refreshed = current_session.query(Images).filter_by(id=image.id).first()
+        current_session.commit()
+        return refreshed or image
+
+    def _discard_image(self, image):
+        current_session = self._current_db_session()
+        if current_session is None or image is None:
+            return
+        current_session.delete(image)
+        current_session.commit()
 
     def __evaluate_follow(self, post_text, post_id, action, tid):
         """
@@ -621,7 +644,12 @@ class FakeAgent(Agent):
 
     @log_execution_time
     def follow(
-        self, tid: int, target: int = None, post_id: int = None, action="follow"
+        self,
+        tid: int,
+        target: int = None,
+        post_id: int = None,
+        action="follow",
+        reciprocal_check=True,
     ):
         """
         Follow a user
@@ -634,7 +662,8 @@ class FakeAgent(Agent):
         """
 
         if post_id is not None:
-            target = self.get_user_from_post(post_id)
+            uid, _uname = self.get_username_from_post(post_id)
+            target = uid
 
         if isinstance(target, int):
 
@@ -651,6 +680,21 @@ class FakeAgent(Agent):
 
             api_url = f"{self.base_url}/follow"
             post(f"{api_url}", headers=headers, data=st)
+            if reciprocal_check and getattr(self, "simulation_client", None) is not None:
+                try:
+                    self.simulation_client.process_reciprocal_follow_event(
+                        actor_agent=self,
+                        target_user_id=int(target),
+                        action=str(action or "").strip().lower(),
+                        tid=int(tid),
+                    )
+                except Exception:
+                    pass
+
+    def _should_reciprocate_follow_event(self, source_agent, action: str) -> bool:
+        if self.probability_of_follow_back <= 0:
+            return False
+        return bool(np.random.rand() <= self.probability_of_follow_back)
 
     def followers(self):
         """

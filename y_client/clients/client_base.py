@@ -459,8 +459,21 @@ class YClientBase(object):
             if agent is None:
                 return
         if agent is not None:
+            agent.simulation_client = self
             self.agents.add_agent(agent)
             self.assign_agent_interests(agent)
+
+    def process_reciprocal_follow_event(
+        self, *, actor_agent, target_user_id: int, action: str, tid: int
+    ) -> bool:
+        for candidate in self.agents.agents:
+            if getattr(candidate, "user_id", None) == int(target_user_id):
+                return bool(
+                    candidate.handle_reciprocal_follow_event(
+                        actor_agent, str(action or "").strip().lower(), int(tid)
+                    )
+                )
+        return False
 
     def create_initial_population(self):
         """
@@ -483,7 +496,7 @@ class YClientBase(object):
                     try:
                         fr_a = id_to_agent[u]
                         to_a = id_to_agent[v]
-                        fr_a.follow(tid=tid, target=to_a.user_id)
+                        fr_a.follow(tid=tid, target=to_a.user_id, reciprocal_check=False)
                     except Exception:
                         pass
 
@@ -586,6 +599,14 @@ class YClientBase(object):
                     random.shuffle(sagents)
                     for g in tqdm.tqdm(sagents):
                         self.sim_clock.maybe_heartbeat()
+                        if getattr(g, "stress_reward_enabled", False):
+                            try:
+                                g.refresh_stress_reward_state(tid, force=True)
+                                if g.evaluate_stress_reward_churn(tid):
+                                    self.agents.remove_agent(g)
+                                    continue
+                            except Exception:
+                                pass
                         daily_active[g.name] = None
 
                         for _ in range(g.round_actions):
