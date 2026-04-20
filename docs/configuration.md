@@ -109,6 +109,7 @@ Representative groups:
 - `max_length_thread_reading`
 - `reading_from_follower_ratio`
 - `probability_of_daily_follow`
+- `probability_of_follow_back`
 - `attention_window`
 
 ### LLM model selection
@@ -150,6 +151,32 @@ The current checked-in config exposes some memory-focused toggles directly:
 - `memory_cross_thread_callback_min_score`
 
 For a deeper explanation of how these affect agent behavior, see [Memory System](memory.md).
+
+### Stress/reward configuration
+
+The client also accepts a top-level `stress_reward` block written by YWeb when the experiment enables that pipeline.
+
+Representative shape:
+
+```json
+{
+  "stress_reward": {
+    "enabled": false,
+    "backward_rounds": 24,
+    "system": {
+      "events": {},
+      "coupling": {},
+      "churn": {
+        "enabled": false
+      }
+    }
+  }
+}
+```
+
+`enabled` activates the client-side stress/reward path. `backward_rounds` controls aggregate reconstruction, and the nested `system` block carries event weights, coupling coefficients, and optional churn settings.
+
+See [Social Feedback Loop](social-feedback.md) for runtime behavior and the client/server split.
 
 ## `posts`
 

@@ -7,6 +7,8 @@ YClientReddit is a Reddit-style adaptation of the YSocial client stack. It keeps
 - voting instead of purely broadcast interaction
 - subreddit-like discussion dynamics
 - memory-aware continuity for forum conversations
+- stress/reward-aware interaction feedback and churn
+- reciprocal follow/unfollow evaluation, including secondary follows
 
 ## What is in this repository
 
@@ -27,6 +29,7 @@ Start here if you need:
 
 - environment setup and how to run the simulator: [Getting Started](getting-started.md)
 - all runtime knobs and JSON structure: [Configuration](configuration.md)
+- stress/reward and reciprocal-follow behavior: [Social Feedback Loop](social-feedback.md)
 - the high-level code layout and execution flow: [Repository Architecture](architecture.md)
 - memory-specific behavior and its reports: [Memory System](memory.md)
 - concrete commands for common tasks: [Usage Examples](examples.md)

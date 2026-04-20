@@ -108,3 +108,26 @@ def test_evaluate_stress_reward_churn_marks_agent_left_when_probability_hits():
     assert agent.evaluate_stress_reward_churn(13, rng=_FixedRng()) is True
     assert agent.left_on == 13
     assert churned == [13]
+
+
+def test_stress_prompt_block_uses_five_point_likert_scale():
+    agent = Agent.__new__(Agent)
+    agent.stress_reward_enabled = True
+    agent.refresh_stress_reward_state = lambda tid, force=False, user_id=None: {
+        "stress": 0.86,
+        "reward": 0.1,
+    }
+
+    prompt_block = agent._stress_prompt_block(9)
+
+    assert "extremely stressed" in prompt_block
+    assert "5/5" in prompt_block
+
+
+def test_stress_prompt_block_is_omitted_when_feature_disabled():
+    agent = Agent.__new__(Agent)
+    agent.stress_reward_enabled = False
+
+    prompt = agent._append_stress_level_to_prompt(base_prompt="Write a comment", tid=3)
+
+    assert prompt == "Write a comment"

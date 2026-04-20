@@ -866,6 +866,44 @@ class Agent(object):
             rendered.append(f"- [{item['type']}] {item['message']}")
         return f"{base_prompt}\n\n" + "\n".join(rendered)
 
+    @staticmethod
+    def _stress_likert_bucket(value):
+        try:
+            stress_value = max(0.0, min(1.0, float(value)))
+        except Exception:
+            stress_value = 0.0
+        if stress_value <= 0.0:
+            return 1, "none"
+        if stress_value <= 0.25:
+            return 2, "slightly stressed"
+        if stress_value <= 0.5:
+            return 3, "moderately stressed"
+        if stress_value <= 0.75:
+            return 4, "very stressed"
+        return 5, "extremely stressed"
+
+    def _stress_prompt_block(self, tid: int) -> str:
+        if not getattr(self, "stress_reward_enabled", False):
+            return ""
+        try:
+            state = self.refresh_stress_reward_state(tid, force=False)
+        except Exception:
+            return ""
+        if not isinstance(state, dict):
+            return ""
+        level, label = self._stress_likert_bucket(state.get("stress", 0.0))
+        return (
+            "Current stress level: "
+            f"{label} ({level}/5 on a five-point scale where 1 means none and 5 means extremely stressed). "
+            "Use this only as internal emotional context while writing."
+        )
+
+    def _append_stress_level_to_prompt(self, *, base_prompt: str, tid: int):
+        stress_block = self._stress_prompt_block(int(tid))
+        if not stress_block:
+            return base_prompt
+        return f"{base_prompt}\n\n{stress_block}"
+
     def _build_current_opinion_payload(self, topic_names, fallback_value=None):
         if not topic_names:
             return {}
@@ -7661,6 +7699,7 @@ class Agent(object):
                 base_prompt=prompt,
                 tid=int(tid),
             )
+            prompt = self._append_stress_level_to_prompt(base_prompt=prompt, tid=int(tid))
 
             u2.initiate_chat(
                 u1,
@@ -7876,6 +7915,7 @@ class Agent(object):
         link_prompt = self.__effify(
             self.prompts["handler_news"], website=website, article=article
         )
+        link_prompt = self._append_stress_level_to_prompt(base_prompt=link_prompt, tid=int(tid))
         u2.initiate_chat(
             u1,
             message=link_prompt,
@@ -10397,6 +10437,10 @@ class Agent(object):
             base_prompt=comment_prompt,
             tid=int(tid),
         )
+        comment_prompt = self._append_stress_level_to_prompt(
+            base_prompt=comment_prompt,
+            tid=int(tid),
+        )
         u2.initiate_chat(
             u1,
             message=comment_prompt,
@@ -12457,6 +12501,10 @@ class Agent(object):
 
         comment_image_prompt = self.__effify(
             self.prompts["handler_comment_image"], descr=image.description
+        )
+        comment_image_prompt = self._append_stress_level_to_prompt(
+            base_prompt=comment_image_prompt,
+            tid=int(tid),
         )
         u2.initiate_chat(
             u1,
