@@ -598,19 +598,57 @@ class YClientBase(object):
                     # shuffle agents
                     random.shuffle(sagents)
                     for g in tqdm.tqdm(sagents):
+                        if getattr(g, "left_on", None) is not None:
+                            continue
                         self.sim_clock.maybe_heartbeat()
-                        if getattr(g, "stress_reward_enabled", False):
-                            try:
-                                g.refresh_stress_reward_state(tid, force=True)
-                                if g.evaluate_stress_reward_churn(tid):
-                                    self.agents.remove_agent(g)
-                                    continue
-                            except Exception:
-                                pass
                         daily_active[g.name] = None
 
-                        for _ in range(g.round_actions):
+                        try:
+                            if g.evaluate_stress_reward_churn(tid):
+                                self.agents.remove_agent_by_ids([g.user_id])
+                                continue
+                        except Exception:
+                            pass
+
+                        try:
+                            activity_effect = g.current_stress_reward_activity_effect(
+                                tid, force=True
+                            )
+                        except Exception:
+                            activity_effect = {
+                                "action_multiplier": 1.0,
+                                "skip_probability": 0.0,
+                            }
+
+                        skip_probability = max(
+                            0.0,
+                            min(
+                                1.0,
+                                float(activity_effect.get("skip_probability", 0.0) or 0.0),
+                            ),
+                        )
+                        if skip_probability > 0.0 and random.random() < skip_probability:
+                            continue
+
+                        action_multiplier = max(
+                            0.01,
+                            min(
+                                1.0,
+                                float(
+                                    activity_effect.get("action_multiplier", 1.0) or 1.0
+                                ),
+                            ),
+                        )
+                        effective_round_actions = max(
+                            1, int(round(float(g.round_actions) * action_multiplier))
+                        )
+
+                        for _ in range(effective_round_actions):
                             self.sim_clock.maybe_heartbeat()
+                            try:
+                                g.refresh_stress_reward_state(tid, force=True)
+                            except Exception:
+                                pass
                             # sample two elements from a list with replacement
                             candidates = random.choices(
                                 acts,
@@ -647,6 +685,45 @@ class YClientBase(object):
                 print("\n\nEvaluating new friendship ties")
                 for agent in tqdm.tqdm(da):
                     self.sim_clock.maybe_heartbeat()
+                    try:
+                        if agent.evaluate_stress_reward_churn(tid):
+                            self.agents.remove_agent_by_ids([agent.user_id])
+                            continue
+                    except Exception:
+                        pass
+                    try:
+                        agent.refresh_stress_reward_state(tid, force=True)
+                    except Exception:
+                        pass
+                    try:
+                        activity_effect = agent.current_stress_reward_activity_effect(
+                            tid, force=False
+                        )
+                    except Exception:
+                        activity_effect = {
+                            "action_multiplier": 1.0,
+                            "skip_probability": 0.0,
+                        }
+                    skip_probability = max(
+                        0.0,
+                        min(
+                            1.0,
+                            float(activity_effect.get("skip_probability", 0.0) or 0.0),
+                        ),
+                    )
+                    action_multiplier = max(
+                        0.01,
+                        min(
+                            1.0,
+                            float(
+                                activity_effect.get("action_multiplier", 1.0) or 1.0
+                            ),
+                        ),
+                    )
+                    if (
+                        skip_probability > 0.0 and random.random() < skip_probability
+                    ) or random.random() >= action_multiplier:
+                        continue
                     agent.select_action(tid=tid, actions=["FOLLOW", "NONE"])
 
                 total_users = len(self.agents.agents)

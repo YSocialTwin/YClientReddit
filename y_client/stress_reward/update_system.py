@@ -63,16 +63,27 @@ class StressRewardSystem:
             "min_probability": 0.0,
             "max_probability": 0.95,
         },
+        "activity_impact": {
+            "enabled": True,
+            "stress_weight": 1.1,
+            "reward_weight": 0.35,
+            "baseline_buffer": 0.10,
+            "min_action_multiplier": 0.15,
+            "max_skip_probability": 0.65,
+        },
         "events": {
             "reaction": {
                 "like": {"stress": -0.005, "reward": 0.03},
-                "dislike": {"stress": 0.03, "reward": -0.02},
+                "dislike": {"stress": 0.05, "reward": -0.03},
+            },
+            "report": {
+                "mass_report": {"stress": 0.12, "reward": -0.05},
             },
             "comment": {
                 "positive": {"stress": -0.02, "reward": 0.07},
                 "neutral": {"stress": 0.0, "reward": 0.01},
-                "critical": {"stress": 0.03, "reward": -0.01},
-                "hostile": {"stress": 0.10, "reward": -0.05},
+                "critical": {"stress": 0.06, "reward": -0.02},
+                "hostile": {"stress": 0.14, "reward": -0.07},
                 "supportive": {"stress": -0.05, "reward": 0.08},
             },
             "share": {
@@ -98,6 +109,9 @@ class StressRewardSystem:
 
     def churn_enabled(self) -> bool:
         return bool((self.config.get("churn") or {}).get("enabled", False))
+
+    def activity_impact_enabled(self) -> bool:
+        return bool((self.config.get("activity_impact") or {}).get("enabled", True))
 
     def build_traits(self, overrides: Optional[Dict[str, Any]] = None) -> AffectiveTraits:
         cfg = deep_update(self.config["traits"], overrides or {})
@@ -172,36 +186,77 @@ class StressRewardSystem:
         elif family == "comment" and subtype == "hostile":
             ds *= directness * public_exposure * source_status * relation_weight
             dr *= directness
+        elif family == "comment" and subtype == "critical":
+            ds *= public_exposure * source_status * relation_weight
+            dr *= public_exposure
         elif family == "comment" and subtype == "supportive":
             ds *= support_strength
             dr *= support_strength
         elif family == "share" and subtype == "positive":
             dr *= public_exposure
         elif family == "share" and subtype == "hostile":
-            ds *= public_exposure * source_status
-            dr *= public_exposure
+            ds *= public_exposure * source_status * relation_weight
+        elif family == "report":
+            ds *= public_exposure * log1p(volume)
+            dr *= public_exposure * log1p(volume)
+        elif family == "moderation" and subtype == "protected":
+            ds *= support_strength
+            dr *= support_strength
 
-        ds *= traits.sensitivity * (1.0 + 0.35 * stress_ctx)
-        dr *= traits.reward_sensitivity * (1.0 + 0.25 * reward_ctx)
+        if ds >= 0:
+            ds *= traits.sensitivity
+        else:
+            ds *= max(0.2, traits.resilience)
 
-        alpha = float(self.config["coupling"]["reward_buffers_stress_alpha"])
-        beta = float(self.config["coupling"]["stress_reduces_reward_beta"])
+        if dr >= 0:
+            dr *= traits.reward_sensitivity
+        else:
+            dr *= traits.visibility_need
+
+        coupling = self.config["coupling"]
 
         if ds > 0:
-            ds *= max(0.0, 1.0 - alpha * reward_ctx * traits.resilience)
-        elif ds < 0:
-            ds *= 1.0 + 0.5 * traits.resilience
+            ds *= max(0.0, 1.0 - coupling["reward_buffers_stress_alpha"] * reward_ctx)
 
         if dr > 0:
-            dr *= max(0.0, 1.0 - beta * stress_ctx)
-        elif dr < 0:
-            dr *= 1.0 + 0.25 * stress_ctx
+            dr *= max(0.0, 1.0 - coupling["stress_reduces_reward_beta"] * stress_ctx)
 
         return {
             "delta_stress": float(ds),
             "delta_reward": float(dr),
             "projected_stress": self._clamp01(stress_ctx + ds),
             "projected_reward": self._clamp01(reward_ctx + dr),
+        }
+
+    def compute_activity_effect(
+            self,
+            *,
+            current_stress: float,
+            current_reward: float,
+    ) -> Dict[str, float]:
+        activity_cfg = self.config.get("activity_impact") or {}
+        if not bool(activity_cfg.get("enabled", True)):
+            return {"action_multiplier": 1.0, "skip_probability": 0.0}
+
+        stress = self._clamp01(current_stress)
+        reward = self._clamp01(current_reward)
+        burden = (
+            float(activity_cfg.get("stress_weight", 1.1)) * stress
+            - float(activity_cfg.get("reward_weight", 0.35)) * reward
+            - float(activity_cfg.get("baseline_buffer", 0.10))
+        )
+        burden = self._clamp01(burden)
+        min_action_multiplier = self._clamp01(
+            activity_cfg.get("min_action_multiplier", 0.15)
+        )
+        max_skip_probability = self._clamp01(
+            activity_cfg.get("max_skip_probability", 0.65)
+        )
+        action_multiplier = max(min_action_multiplier, 1.0 - burden)
+        skip_probability = min(max_skip_probability, max(0.0, burden * 0.85))
+        return {
+            "action_multiplier": float(action_multiplier),
+            "skip_probability": float(skip_probability),
         }
 
     def compute_current_stress_reward(self, *, base_url: str, agent_id: str, current_tid: str, backward_rounds: int = 24) -> Dict[str, float]:
