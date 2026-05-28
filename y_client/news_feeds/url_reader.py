@@ -5,11 +5,7 @@ from bs4 import BeautifulSoup
 import datetime
 from urllib.parse import urlparse
 
-try:
-    from .client_modals import Websites, Articles, Images, session
-except:
-    from y_client.clients.client_web import session
-    from .client_modals import Websites, Articles, Images
+from y_client import content_store
 
 EXCLUDED_DOMAINS = [
     'youtube.com', 'youtu.be', 'facebook.com', 'twitter.com', 't.co', 'reddit.com',
@@ -43,30 +39,26 @@ class NewsFromURL(object):
         self.image_url = image_url
 
     def save(self, website_name):
-        website = session.query(Websites).filter(Websites.name == website_name).first()
-        if not website:
-            # Create a new website entry if not exists
-            website = Websites(name=website_name, rss=None, country="Unknown", language="en", leaning="center", category="general", last_fetched=self.published)
-            session.add(website)
-            session.commit()
-        website_id = website.id
-        # Check if article exists
-        if session.query(Articles).filter(Articles.link == self.link).first() is None:
-            art = Articles(
-                title=self.title,
-                summary=self.summary,
-                website_id=website_id,
-                fetched_on=self.published,
-                link=self.link,
-            )
-            session.add(art)
-            session.commit()
-        article_id = session.query(Articles).filter(Articles.link == self.link).first().id
-        if self.image_url is not None:
-            if session.query(Images).filter(Images.url == self.image_url).first() is None:
-                img = Images(url=self.image_url, article_id=article_id)
-                session.add(img)
-                session.commit()
+        website = content_store.ensure_website(
+            name=website_name,
+            rss="",
+            country="Unknown",
+            language="en",
+            leaning="center",
+            category="general",
+            last_fetched=self.published,
+        )
+        if website is None:
+            return
+        content_store.save_article(
+            website_name=website.name,
+            rss=website.rss,
+            title=self.title,
+            summary=self.summary,
+            published=self.published,
+            link=self.link,
+            image_url=self.image_url,
+        )
 
 class URLReader(object):
     def __init__(self, urls, website_name_prefix="Website"):  # urls: list of URLs

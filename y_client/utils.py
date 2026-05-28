@@ -4,10 +4,8 @@ import re
 
 import faker
 
-try:
-    from y_client import Agent
-except:
-    from y_client.classes.base_agent import Agent
+from y_client.classes.base_agent import Agent
+from y_client.classes.fake_base_agent import FakeAgent
 
 
 _MAX_USERNAME_LEN = 15
@@ -51,6 +49,15 @@ _REDDIT_ROLES = (
 )
 _REDDIT_VERBS = ("scroll", "meme", "rant", "debate", "doom")
 _REDDIT_PREFIXES = ("actual", "real", "justa", "defnot", "probnot")
+
+
+def _rule_based_agents_enabled(config):
+    llm_agents = config.get("agents", {}).get("llm_agents")
+    return (
+        isinstance(llm_agents, list)
+        and len(llm_agents) == 1
+        and llm_agents[0] is None
+    )
 
 
 def _sanitize_forum_username(raw: str) -> str:
@@ -214,7 +221,9 @@ def generate_user(config, owner=None, username_type=None, used_names=None):
 
     api_key = config["servers"]["llm_api_key"]
 
-    agent = Agent(
+    AgentClass = FakeAgent if _rule_based_agents_enabled(config) else Agent
+
+    agent = AgentClass(
         name=name,
         pwd=pwd,
         email=email,

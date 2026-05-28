@@ -53,6 +53,16 @@
       "search": 0.1,
       "cast": 0.0,
       "share_link": 0.3
+    },
+    "opinion_dynamics": {
+      "enabled": false,
+      "model_name": "bounded_confidence",
+      "parameters": {
+        "epsilon": 0.25,
+        "mu": 0.5,
+        "theta": 0.0,
+        "cold_start": "neutral"
+      }
     }
   },
   "agents": {

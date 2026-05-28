@@ -1,55 +1,16 @@
-from sqlalchemy import orm, text
-from sqlalchemy.ext.declarative import declarative_base
-import sqlalchemy as db
+import json
 import os
 import os.path
-import json
 import shutil
 
+import sqlalchemy as db
+from sqlalchemy import orm, text
+from sqlalchemy.ext.declarative import declarative_base
 
-try:
-    BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
-    # Check for PostgreSQL via DATABASE_URL environment variable first
-    database_url = os.environ.get("DATABASE_URL")
-
-    if database_url and "postgresql" in database_url:
-        # PostgreSQL mode - use DATABASE_URL
-        base = declarative_base()
-        from sqlalchemy.pool import NullPool
-        engine = db.create_engine(database_url, poolclass=NullPool)
-        base.metadata.bind = engine
-        session = orm.scoped_session(orm.sessionmaker())(bind=engine)
-    else:
-        # SQLite mode - try to find config file
-        import glob
-        config_files = glob.glob(f"{BASE_DIR}/../../experiments/client_*.json")
-        if config_files:
-            config_path = config_files[0]
-            config = json.load(open(config_path))
-            db_name = config['simulation']['name']
-        else:
-            config = None
-            db_name = None
-
-        if config and not os.path.exists(f"{BASE_DIR}/../../experiments/{db_name}.db"):
-            shutil.copyfile(
-                f"{BASE_DIR}/../../data_schema/database_clean_client.db",
-                f"{BASE_DIR}/../../experiments/{db_name}.db",
-            )
-
-        base = declarative_base()
-        if db_name:
-            engine = db.create_engine(f"sqlite:///experiments/{db_name}.db")
-            base.metadata.bind = engine
-            session = orm.scoped_session(orm.sessionmaker())(bind=engine)
-        else:
-            engine = None
-            session = None
-except Exception:
-    from y_client.clients.client_web import base, session
-    engine = getattr(session, "bind", None) if session is not None else None
-    pass
+base = declarative_base()
+engine = None
+session = None
 
 
 class Articles(base):
@@ -86,7 +47,6 @@ class Images(base):
 
 
 class ImagePosts(base):
-    """Standalone images from image-focused feeds (Reddit RSS, etc.)"""
     __tablename__ = "image_posts"
     id = db.Column(db.Integer, primary_key=True)
     url = db.Column(db.String(500), nullable=False)
@@ -107,12 +67,87 @@ class Agent_Custom_Prompt(base):
     prompt = db.Column(db.TEXT, nullable=False)
 
 
+class StressReward(base):
+    __tablename__ = "stress_reward"
+    __table_args__ = (
+        db.CheckConstraint(
+            "variable IN ('stress', 'reward')", name="ck_stress_reward_variable"
+        ),
+        db.CheckConstraint(
+            "type IN ('aggregate', 'variation')", name="ck_stress_reward_type"
+        ),
+        db.CheckConstraint("value >= 0 AND value <= 1", name="ck_stress_reward_value"),
+    )
+
+    id = db.Column(db.String(36), primary_key=True)
+    uid = db.Column(db.Integer, db.ForeignKey("user_mgmt.id"), nullable=False, index=True)
+    variable = db.Column(db.String(16), nullable=False)
+    value = db.Column(db.Float, nullable=False)
+    type = db.Column(db.String(16), nullable=False)
+    tid = db.Column(db.Integer, db.ForeignKey("rounds.id"), nullable=False, index=True)
+
+
+def _legacy_default_db_path():
+    base_dir = os.path.dirname(os.path.abspath(__file__))
+    database_url = os.environ.get("CONTENT_DATABASE_URL")
+    if database_url:
+        return None, database_url
+
+    try:
+        import glob
+
+        config_files = glob.glob(f"{base_dir}/../../experiments/client_*.json")
+        if config_files:
+            config = json.load(open(config_files[0]))
+            db_name = config["simulation"]["name"]
+            db_path = f"{base_dir}/../../experiments/{db_name}.db"
+            return db_path, None
+    except Exception:
+        pass
+
+    return None, None
+
+
+def _ensure_sqlite_seed_db(target_path):
+    if target_path is None or os.path.exists(target_path):
+        return
+    os.makedirs(os.path.dirname(target_path), exist_ok=True)
+    base_dir = os.path.dirname(os.path.abspath(__file__))
+    shutil.copyfile(
+        f"{base_dir}/../../data_schema/database_clean_client.db",
+        target_path,
+    )
+
+
 def _ensure_sqlite_schema_compatibility():
     if engine is None or engine.dialect.name != "sqlite":
         return
 
     try:
         with engine.begin() as conn:
+            conn.execute(
+                text(
+                    """
+                    CREATE TABLE IF NOT EXISTS stress_reward (
+                        id VARCHAR(36) PRIMARY KEY,
+                        uid INTEGER NOT NULL,
+                        variable VARCHAR(16) NOT NULL,
+                        value FLOAT NOT NULL,
+                        type VARCHAR(16) NOT NULL,
+                        tid INTEGER NOT NULL,
+                        FOREIGN KEY(uid) REFERENCES user_mgmt(id),
+                        FOREIGN KEY(tid) REFERENCES rounds(id),
+                        CONSTRAINT ck_stress_reward_variable
+                            CHECK (variable IN ('stress', 'reward')),
+                        CONSTRAINT ck_stress_reward_type
+                            CHECK (type IN ('aggregate', 'variation')),
+                        CONSTRAINT ck_stress_reward_value
+                            CHECK (value >= 0 AND value <= 1)
+                    )
+                    """
+                )
+            )
+
             conn.execute(
                 text(
                     """
@@ -137,31 +172,52 @@ def _ensure_sqlite_schema_compatibility():
             }
             if website_columns:
                 if "fetch_images_from_url" not in website_columns:
-                    conn.execute(
-                        text(
-                            "ALTER TABLE websites ADD COLUMN fetch_images_from_url BOOLEAN DEFAULT 0"
-                        )
-                    )
+                    conn.execute(text("ALTER TABLE websites ADD COLUMN fetch_images_from_url BOOLEAN DEFAULT 0"))
                 if "fetch_images_timeout" not in website_columns:
-                    conn.execute(
-                        text(
-                            "ALTER TABLE websites ADD COLUMN fetch_images_timeout INTEGER DEFAULT 10"
-                        )
-                    )
+                    conn.execute(text("ALTER TABLE websites ADD COLUMN fetch_images_timeout INTEGER DEFAULT 10"))
 
             image_post_columns = {
                 row[1] for row in conn.execute(text("PRAGMA table_info(image_posts)")).fetchall()
             }
             if "local_path" not in image_post_columns:
-                conn.execute(
-                    text("ALTER TABLE image_posts ADD COLUMN local_path VARCHAR(500)")
-                )
+                conn.execute(text("ALTER TABLE image_posts ADD COLUMN local_path VARCHAR(500)"))
             if "high_res_url" not in image_post_columns:
-                conn.execute(
-                    text("ALTER TABLE image_posts ADD COLUMN high_res_url VARCHAR(500)")
-                )
+                conn.execute(text("ALTER TABLE image_posts ADD COLUMN high_res_url VARCHAR(500)"))
     except Exception:
         pass
 
 
-_ensure_sqlite_schema_compatibility()
+def initialize_client_db(*, db_path=None, database_url=None):
+    global engine, session
+
+    if database_url is None and db_path is None:
+        db_path, database_url = _legacy_default_db_path()
+
+    if database_url:
+        engine = db.create_engine(database_url)
+    elif db_path:
+        _ensure_sqlite_seed_db(db_path)
+        engine = db.create_engine(
+            f"sqlite:////{os.path.abspath(db_path)}",
+            connect_args={"check_same_thread": False, "timeout": 30},
+        )
+    else:
+        engine = None
+        session = None
+        return None, None, base
+
+    base.metadata.bind = engine
+    session = orm.scoped_session(orm.sessionmaker())(bind=engine)
+    _ensure_sqlite_schema_compatibility()
+    return session, engine, base
+
+
+def get_session():
+    return session
+
+
+def get_engine():
+    return engine
+
+
+initialize_client_db()

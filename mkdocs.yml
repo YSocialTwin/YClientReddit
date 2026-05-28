@@ -1,0 +1,38 @@
+site_name: YClientReddit
+site_description: Documentation for the Reddit-style YSocial client
+site_url: ""
+repo_name: YClientReddit
+repo_url: ""
+docs_dir: docs
+theme:
+  name: mkdocs
+nav:
+  - Home: index.md
+  - Getting Started:
+      - Installation: getting-started.md
+      - Running Simulations: running-simulations.md
+  - Reference:
+      - Configuration: configuration.md
+      - Clients: clients.md
+      - Social Feedback Loop: social-feedback.md
+      - Recommenders: recommenders.md
+      - Feeds and Content: feeds-and-content.md
+      - Scripts and Workflows: scripts-and-workflows.md
+      - Testing: testing.md
+  - Architecture:
+      - Repository Architecture: architecture.md
+      - Memory System: memory.md
+      - Opinion Dynamics: opinion-dynamics.md
+      - Logging: logging.md
+  - Examples:
+      - Usage Examples: examples.md
+  - Advanced Reports:
+      - Agent Memory Report: agent_memory_report.md
+      - Parametric Memory Refactor: agent_memory_parametric_refactor_report.md
+      - External Memory Package Pipeline: external_memory_package_pipeline.md
+markdown_extensions:
+  - toc:
+      permalink: true
+  - tables
+  - admonition
+  - fenced_code

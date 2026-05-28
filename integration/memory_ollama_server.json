@@ -1,0 +1,11 @@
+{
+  "name": "memory_integration",
+  "host": "127.0.0.1",
+  "port": 5011,
+  "debug": "False",
+  "reset_db": "True",
+  "modules": [
+    "voting"
+  ],
+  "perspective_api": null
+}

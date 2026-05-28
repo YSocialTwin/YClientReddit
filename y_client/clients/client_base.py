@@ -16,7 +16,8 @@ sys.path.append(os.path.dirname(SCRIPT_DIR))
 from y_client import Agent, Agents, SimulationSlot
 from y_client.recsys import *
 from y_client.utils import generate_user
-from y_client.news_feeds import Feeds, session, Websites, Articles, Images
+from y_client.news_feeds import Feeds
+from y_client.content_store import initialize_content_store, reset_content_db
 
 admin_session = None
 admin_engine = None
@@ -47,12 +48,14 @@ class YClientBase(object):
 
         self.prompts = self._load_prompts_with_defaults(prompts_filename)
         self.config = json.load(open(config_filename, "r"))
+        initialize_content_store(experiment_name=self.config["simulation"]["name"])
         self.agents_owner = owner
         self.agents_filename = agents_filename
         self.agents_output = agents_output
 
         self.days = self.config["simulation"]["days"]
         self.slots = self.config["simulation"]["slots"]
+        self.heartbeat_interval = float(self.config["simulation"].get("heartbeat_interval", 5.0))
         self.n_agents = self.config["simulation"]["starting_agents"]
         self.percentage_new_agents_iteration = self.config["simulation"][
             "percentage_new_agents_iteration"
@@ -85,8 +88,16 @@ class YClientBase(object):
         # posts' parameters
         self.visibility_rd = self.config["posts"]["visibility_rounds"]
 
+        self.client_id = (
+            f"{self.config['simulation']['name']}:{self.agents_owner}:{os.getpid()}"
+        )
+
         # initialize simulation clock
-        self.sim_clock = SimulationSlot(self.config)
+        self.sim_clock = SimulationSlot(
+            self.config,
+            client_id=self.client_id,
+            heartbeat_interval=self.heartbeat_interval,
+        )
 
         self.agents = Agents()
         self.feed = Feeds()
@@ -142,10 +153,7 @@ class YClientBase(object):
         """
         Reset the news database
         """
-        session.query(Articles).delete()
-        session.query(Websites).delete()
-        session.query(Images).delete()
-        session.commit()
+        reset_content_db()
 
     def reset_experiment(self):
         """
@@ -451,8 +459,21 @@ class YClientBase(object):
             if agent is None:
                 return
         if agent is not None:
+            agent.simulation_client = self
             self.agents.add_agent(agent)
             self.assign_agent_interests(agent)
+
+    def process_reciprocal_follow_event(
+        self, *, actor_agent, target_user_id: int, action: str, tid: int
+    ) -> bool:
+        for candidate in self.agents.agents:
+            if getattr(candidate, "user_id", None) == int(target_user_id):
+                return bool(
+                    candidate.handle_reciprocal_follow_event(
+                        actor_agent, str(action or "").strip().lower(), int(tid)
+                    )
+                )
+        return False
 
     def create_initial_population(self):
         """
@@ -475,7 +496,7 @@ class YClientBase(object):
                     try:
                         fr_a = id_to_agent[u]
                         to_a = id_to_agent[v]
-                        fr_a.follow(tid=tid, target=to_a.user_id)
+                        fr_a.follow(tid=tid, target=to_a.user_id, reciprocal_check=False)
                     except Exception:
                         pass
 
@@ -487,6 +508,9 @@ class YClientBase(object):
                     email=data["email"],
                     config=self.config,
                     load=True,
+                    opinions=data.get("opinions"),
+                    stubborn_topics=data.get("stubborn_topics"),
+                    custom_features=data.get("custom_features"),
                 )
 
                 agent.set_prompts(self.prompts)
@@ -509,7 +533,13 @@ class YClientBase(object):
         for a in agents["agents"]:
             try:
                 ag = Agent(
-                    name=a["name"], email=a["email"], load=True, config=self.config
+                    name=a["name"],
+                    email=a["email"],
+                    load=True,
+                    config=self.config,
+                    opinions=a.get("opinions"),
+                    stubborn_topics=a.get("stubborn_topics"),
+                    custom_features=a.get("custom_features"),
                 )
                 ag.set_prompts(self.prompts)
                 ag.set_rec_sys(self.content_recsys, self.follow_recsys)
@@ -545,93 +575,187 @@ class YClientBase(object):
         """
         Run the simulation
         """
+        try:
+            for day in tqdm.tqdm(range(self.days)):
+                print(f"\n\nDay {day} of simulation\n")
+                daily_active = {}
+                tid, _, _ = self.sim_clock.get_current_slot()
 
-        for day in tqdm.tqdm(range(self.days)):
-            print(f"\n\nDay {day} of simulation\n")
-            daily_active = {}
-            tid, _, _ = self.sim_clock.get_current_slot()
+                for _ in tqdm.tqdm(range(self.slots)):
+                    self.sim_clock.maybe_heartbeat()
+                    tid, _, h = self.sim_clock.get_current_slot()
 
-            for _ in tqdm.tqdm(range(self.slots)):
-                tid, _, h = self.sim_clock.get_current_slot()
+                    # get expected active users for this time slot (at least 1)
+                    expected_active_users = max(
+                        int(len(self.agents.agents) * self.hourly_activity[str(h)]), 1
+                    )
 
-                # get expected active users for this time slot (at least 1)
-                expected_active_users = max(
-                    int(len(self.agents.agents) * self.hourly_activity[str(h)]), 1
-                )
+                    sagents = random.sample(self.agents.agents, min(expected_active_users, len(self.agents.agents)))
 
-                sagents = random.sample(self.agents.agents, min(expected_active_users, len(self.agents.agents)))
+                    # available actions
+                    acts = [a for a, v in self.actions_likelihood.items() if v > 0]
 
-                # available actions
-                acts = [a for a, v in self.actions_likelihood.items() if v > 0]
+                    # shuffle agents
+                    random.shuffle(sagents)
+                    for g in tqdm.tqdm(sagents):
+                        if getattr(g, "left_on", None) is not None:
+                            continue
+                        self.sim_clock.maybe_heartbeat()
+                        daily_active[g.name] = None
 
-                # shuffle agents
-                random.shuffle(sagents)
-                for g in tqdm.tqdm(sagents):
-                    daily_active[g.name] = None
+                        try:
+                            if g.evaluate_stress_reward_churn(tid):
+                                self.agents.remove_agent_by_ids([g.user_id])
+                                continue
+                        except Exception:
+                            pass
 
-                    for _ in range(g.round_actions):
-                        # sample two elements from a list with replacement
-                        candidates = random.choices(
-                            acts,
-                            k=2,
-                            weights=[self.actions_likelihood[a] for a in acts],
+                        try:
+                            activity_effect = g.current_stress_reward_activity_effect(
+                                tid, force=True
+                            )
+                        except Exception:
+                            activity_effect = {
+                                "action_multiplier": 1.0,
+                                "skip_probability": 0.0,
+                            }
+
+                        skip_probability = max(
+                            0.0,
+                            min(
+                                1.0,
+                                float(activity_effect.get("skip_probability", 0.0) or 0.0),
+                            ),
                         )
-                        candidates.append("NONE")
+                        if skip_probability > 0.0 and random.random() < skip_probability:
+                            continue
 
-                        # reply to received mentions
-                        g.reply(tid=tid)
-
-                        # select action to be performed
-                        g.select_action(
-                            tid=tid,
-                            actions=candidates,
-                            max_length_thread_reading=self.max_length_thread_reading,
+                        action_multiplier = max(
+                            0.01,
+                            min(
+                                1.0,
+                                float(
+                                    activity_effect.get("action_multiplier", 1.0) or 1.0
+                                ),
+                            ),
+                        )
+                        effective_round_actions = max(
+                            1, int(round(float(g.round_actions) * action_multiplier))
                         )
 
-                    # Reset post counter and temperature after agent's round is complete
-                    g.reset_round_post_count()
+                        for _ in range(effective_round_actions):
+                            self.sim_clock.maybe_heartbeat()
+                            try:
+                                g.refresh_stress_reward_state(tid, force=True)
+                            except Exception:
+                                pass
+                            # sample two elements from a list with replacement
+                            candidates = random.choices(
+                                acts,
+                                k=2,
+                                weights=[self.actions_likelihood[a] for a in acts],
+                            )
+                            candidates.append("NONE")
 
-                # increment slot
-                self.sim_clock.increment_slot()
+                            # reply to received mentions
+                            g.reply(tid=tid)
 
-            # evaluate following (once per day, only for a random sample of daily active agents)
-            da = [
-                agent
-                for agent in self.agents.agents
-                if agent.name in daily_active
-                and random.random()
-                < float(self.config["agents"]["probability_of_daily_follow"])
-            ]
+                            # select action to be performed
+                            g.select_action(
+                                tid=tid,
+                                actions=candidates,
+                                max_length_thread_reading=self.max_length_thread_reading,
+                            )
 
-            print("\n\nEvaluating new friendship ties")
-            for agent in tqdm.tqdm(da):
-                agent.select_action(tid=tid, actions=["FOLLOW", "NONE"])
+                        # Reset post counter and temperature after agent's round is complete
+                        g.reset_round_post_count()
 
-            total_users = len(self.agents.agents)
+                    # increment slot
+                    self.sim_clock.increment_slot()
 
-            # daily churn
-            self.churn(tid)
+                # evaluate following (once per day, only for a random sample of daily active agents)
+                da = [
+                    agent
+                    for agent in self.agents.agents
+                    if agent.name in daily_active
+                    and random.random()
+                    < float(self.config["agents"]["probability_of_daily_follow"])
+                ]
 
-            # daily new agents
-            if self.percentage_new_agents_iteration > 0:
-                for _ in range(
-                    max(
-                        1,
-                        int(
-                            len(daily_active)
-                            * self.percentage_new_agents_iteration
+                print("\n\nEvaluating new friendship ties")
+                for agent in tqdm.tqdm(da):
+                    self.sim_clock.maybe_heartbeat()
+                    try:
+                        if agent.evaluate_stress_reward_churn(tid):
+                            self.agents.remove_agent_by_ids([agent.user_id])
+                            continue
+                    except Exception:
+                        pass
+                    try:
+                        agent.refresh_stress_reward_state(tid, force=True)
+                    except Exception:
+                        pass
+                    try:
+                        activity_effect = agent.current_stress_reward_activity_effect(
+                            tid, force=False
+                        )
+                    except Exception:
+                        activity_effect = {
+                            "action_multiplier": 1.0,
+                            "skip_probability": 0.0,
+                        }
+                    skip_probability = max(
+                        0.0,
+                        min(
+                            1.0,
+                            float(activity_effect.get("skip_probability", 0.0) or 0.0),
                         ),
                     )
+                    action_multiplier = max(
+                        0.01,
+                        min(
+                            1.0,
+                            float(
+                                activity_effect.get("action_multiplier", 1.0) or 1.0
+                            ),
+                        ),
+                    )
+                    if (
+                        skip_probability > 0.0 and random.random() < skip_probability
+                    ) or random.random() >= action_multiplier:
+                        continue
+                    agent.select_action(tid=tid, actions=["FOLLOW", "NONE"])
+
+                total_users = len(self.agents.agents)
+
+                # daily churn
+                self.churn(tid)
+
+                # daily new agents
+                if self.percentage_new_agents_iteration > 0:
+                    for _ in range(
+                        max(
+                            1,
+                            int(
+                                len(daily_active)
+                                * self.percentage_new_agents_iteration
+                            ),
+                        )
+                    ):
+                        self.add_agent()
+
+                # saving "living" agents at the end of the day
+                if (
+                    self.percentage_removed_agents_iteration != 0
+                    or self.percentage_removed_agents_iteration != 0
                 ):
-                    self.add_agent()
+                    self.save_agents()
 
-            # saving "living" agents at the end of the day
-            if (
-                self.percentage_removed_agents_iteration != 0
-                or self.percentage_removed_agents_iteration != 0
-            ):
-                self.save_agents()
-
-            print(
-                f"\n\nTotal Users: {total_users}\nActive users: {len(daily_active)}\nUsers at the end of the day: {len(self.agents.agents)}\n"
-            )
+                print(
+                    f"\n\nTotal Users: {total_users}\nActive users: {len(daily_active)}\nUsers at the end of the day: {len(self.agents.agents)}\n"
+                )
+        finally:
+            try:
+                self.sim_clock.complete_client()
+            except Exception:
+                pass
