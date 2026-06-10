@@ -10671,9 +10671,6 @@ class Agent(object):
             }
         )
 
-        print(st, flush=True)
-
-
         headers = {"Content-Type": "application/x-www-form-urlencoded"}
         api_url = f"{self.base_url}/comment"
         response = post(f"{api_url}", headers=headers, data=st)
