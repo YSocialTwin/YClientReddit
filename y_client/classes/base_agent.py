@@ -10512,6 +10512,7 @@ class Agent(object):
         post_text = self.__clean_text(post_text)
         if not self._is_generated_text_usable(post_text):
             return False
+        original_post_text = post_text
 
         memory_required = bool(
             (not subtle_memory_mode)
@@ -10545,6 +10546,12 @@ class Agent(object):
                 post_text,
                 recalled_pack.get("items"),
             )
+            if not self._is_generated_text_usable(post_text):
+                post_text = original_post_text
+                callback_retry_ok, callback_reason = self._memory_reply_references_recalled_item(
+                    post_text,
+                    recalled_pack.get("items"),
+                )
 
         try:
             self._decision_log(
@@ -10592,9 +10599,6 @@ class Agent(object):
 
         emotion_eval = self._extract_optional_emotion_eval(u2, u1)
 
-        hashtags = self.__extract_components(post_text, c_type="hashtags")
-        mentions = self.__extract_components(post_text, c_type="mentions")
-
         payload_text = (
             post_text.replace('"', "")
             .replace(f"{self.name}", "")
@@ -10602,8 +10606,20 @@ class Agent(object):
             .replace("*", "")
             .strip()
         )
+        if not self._is_generated_text_usable(payload_text):
+            payload_text = original_post_text
+            payload_text = (
+                payload_text.replace('"', "")
+                .replace(f"{self.name}", "")
+                .replace(":", "")
+                .replace("*", "")
+                .strip()
+            )
         if len(payload_text) < 3:
             return False
+
+        hashtags = self.__extract_components(payload_text, c_type="hashtags")
+        mentions = self.__extract_components(payload_text, c_type="mentions")
 
         # Policy: within the same round and same parent, allow only if text differs.
         if self._has_recent_identical_comment(tid=tid, parent_post_id=post_id, text=payload_text):
@@ -10654,6 +10670,9 @@ class Agent(object):
                 "client_action_id": client_action_id,
             }
         )
+
+        print(st, flush=True)
+
 
         headers = {"Content-Type": "application/x-www-form-urlencoded"}
         api_url = f"{self.base_url}/comment"
