@@ -1,6 +1,12 @@
 from __future__ import annotations
 
+import sys
+from pathlib import Path
 from types import SimpleNamespace
+
+ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
 
 from y_client.classes.annotator import Annotator
 from y_client.classes.base_agent import Agent
@@ -101,3 +107,42 @@ def test_clean_text_strips_trailing_emotion_fragments():
     )
 
     assert cleaned == "found this gem at a congressional hearing yesterday"
+
+
+def test_emotion_payload_detection_rejects_label_lists():
+    agent = Agent.__new__(Agent)
+    agent.emotions = [
+        "admiration",
+        "amusement",
+        "anger",
+        "annoyance",
+        "approval",
+        "caring",
+        "confusion",
+        "curiosity",
+        "desire",
+        "disappointment",
+        "disapproval",
+        "disgust",
+        "embarrassment",
+        "excitement",
+        "fear",
+        "gratitude",
+        "grief",
+        "joy",
+        "love",
+        "nervousness",
+        "optimism",
+        "pride",
+        "realization",
+        "relief",
+        "remorse",
+        "sadness",
+        "surprise",
+        "trust",
+    ]
+
+    assert agent._looks_like_emotion_payload("anger, disgust")
+    assert agent._looks_like_emotion_payload("(desperation, fear)\n(amusement, concern)")
+    assert agent._looks_like_emotion_payload("Admiration, disappointment, disgust, grief, irritation, outrage, sadness, sorrow")
+    assert not agent._looks_like_emotion_payload("I cannot annotate emotions with this text. Is there something else I can help you with?")

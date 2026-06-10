@@ -12700,6 +12700,18 @@ class Agent(object):
         if not allowed:
             return False
 
+        # Short label dumps like "anger, disgust" or multiline label lists
+        # should never be treated as generated post/comment text.
+        compact_tokens = [
+            t
+            for t in re.split(r"[\s,\[\]\(\)\{\}:;,.!?\n\r\t]+", normalized)
+            if t
+        ]
+        emotion_tokens = [t for t in compact_tokens if t in allowed]
+        non_emotion_tokens = [t for t in compact_tokens if t not in allowed]
+        if len(emotion_tokens) >= 2 and len(non_emotion_tokens) <= 4:
+            return True
+
         # Catch verbose handler-style analysis outputs such as:
         # "Here are the emotions identified in the text using the GoEmotions taxonomy..."
         # Those are annotation payloads and must never be reused as post/comment text.
@@ -12748,6 +12760,9 @@ class Agent(object):
             if first in allowed:
                 clause_starts_with_emotion += 1
         if len(clauses) >= 3 and clause_starts_with_emotion >= 3:
+            return True
+
+        if emotion_token_count >= 2 and len(non_emotion_tokens) <= 6:
             return True
 
         normalized = re.sub(
