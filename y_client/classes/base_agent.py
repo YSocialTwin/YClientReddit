@@ -7762,6 +7762,8 @@ class Agent(object):
                 u2, u1, prompt_hint=prompt, skip_emotion_like=True
             )
             post_text = self.__clean_text(post_text)
+            if not self._is_generated_text_usable(post_text):
+                return None
             # Avoid markdown emphasis causing bold rendering in the UI.
             post_text = post_text.replace("*", "")
             post_text, length_meta = self._enforce_text_limits(
@@ -7977,9 +7979,13 @@ class Agent(object):
             u2, u1, prompt_hint=link_prompt, skip_emotion_like=True
         )
         post_text = self.__clean_text(post_text)
+        if not self._is_generated_text_usable(post_text):
+            return None
 
         # Strip reproduced article content from LLM output
         post_text = self._strip_reproduced_article_content(post_text, article.summary)
+        if not self._is_generated_text_usable(post_text):
+            return None
         # Avoid markdown emphasis causing bold rendering in the UI.
         post_text = post_text.replace("*", "")
 
@@ -10504,6 +10510,8 @@ class Agent(object):
 
         # cleaning the post text of some unwanted characters
         post_text = self.__clean_text(post_text)
+        if not self._is_generated_text_usable(post_text):
+            return False
 
         memory_required = bool(
             (not subtle_memory_mode)
@@ -10840,6 +10848,8 @@ class Agent(object):
             .replace("@,", "")
         )
         post_text = post_text.replace(f"@{self.name}", "")
+        if not self._is_generated_text_usable(post_text):
+            return None
 
         emotion_eval = self._extract_optional_emotion_eval(u2, u1)
 
@@ -12569,6 +12579,8 @@ class Agent(object):
 
         # cleaning the post text of some unwanted characters
         post_text = self.__clean_text(post_text)
+        if not self._is_generated_text_usable(post_text):
+            return
 
         # avoid posting empty messages
         if len(post_text) < 3:
@@ -12884,6 +12896,25 @@ class Agent(object):
         except Exception:
             pass
         return ""
+
+    def _is_generated_text_usable(self, text_value):
+        """
+        Return True when generated content looks like publishable user text.
+
+        This is the last-line guard after extraction. It rejects prompt scaffolds,
+        emotion annotation payloads, and empty strings so a malformed handler
+        turn cannot leak into a post/comment body.
+        """
+        if not isinstance(text_value, str):
+            return False
+        cleaned = self.__clean_text(text_value)
+        if len(cleaned) < 3:
+            return False
+        if self._is_prompt_scaffold(cleaned):
+            return False
+        if self._looks_like_emotion_payload(cleaned):
+            return False
+        return True
 
     def __clean_emotion(self, text):
         try:

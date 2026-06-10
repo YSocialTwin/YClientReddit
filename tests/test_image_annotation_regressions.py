@@ -205,3 +205,42 @@ def test_generated_content_ignores_trailing_emotion_annotation_message():
     )
 
     assert extracted == "Real post body about policy and money."
+
+
+def test_generated_text_usable_rejects_emotion_annotations():
+    agent = Agent.__new__(Agent)
+    agent.name = "forumuser"
+    agent.emotions = [
+        "admiration",
+        "amusement",
+        "anger",
+        "annoyance",
+        "approval",
+        "caring",
+        "confusion",
+        "curiosity",
+        "desire",
+        "disappointment",
+        "disapproval",
+        "disgust",
+        "embarrassment",
+        "excitement",
+        "fear",
+        "gratitude",
+        "grief",
+        "joy",
+        "love",
+        "nervousness",
+        "optimism",
+        "pride",
+        "realization",
+        "relief",
+        "remorse",
+        "sadness",
+        "surprise",
+        "trust",
+    ]
+
+    assert not agent._is_generated_text_usable("No emotions were found in this annotated sentence.")
+    assert not agent._is_generated_text_usable("anger, disgust")
+    assert agent._is_generated_text_usable("This is a normal forum comment.")
