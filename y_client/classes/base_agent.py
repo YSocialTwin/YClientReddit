@@ -7758,8 +7758,6 @@ class Agent(object):
                 max_turns=1,
             )
 
-            emotion_eval = self._extract_optional_emotion_eval(u2, u1)
-
             post_text = self._extract_generated_chat_content(
                 u2, u1, prompt_hint=prompt, skip_emotion_like=True
             )
@@ -7788,7 +7786,9 @@ class Agent(object):
                 pass
 
             if len(post_text) < 3:
-                return
+                continue
+
+            emotion_eval = self._extract_optional_emotion_eval(u2, u1)
 
             if getattr(self, "forum_post_structure_strict", False):
                 validation = self._validate_structured_post_text(post_text)
@@ -7850,28 +7850,28 @@ class Agent(object):
                 if len(post_text) < 3:
                     continue
 
-            fingerprint, topic_matches = self._post_find_recent_topic_matches(
-                text_value=post_text,
-                tid=int(tid),
-            )
-            is_stale_topic = bool(topic_matches)
-            try:
-                self._decision_log(
-                    {
-                        "decision_type": "post_topic_freshness",
-                        "run_id": getattr(self, "memory_run_id", None),
-                        "agent_user_id": int(getattr(self, "user_id", -1) or -1),
-                        "agent_name": getattr(self, "name", None),
-                        "tid": int(tid),
-                        "attempt": int(attempt),
-                        "stale_topic": bool(is_stale_topic),
-                        "topic_title": fingerprint.get("title") or "",
-                        "topic_entities": fingerprint.get("entities") or [],
-                        "recent_matches": topic_matches,
-                    }
+                fingerprint, topic_matches = self._post_find_recent_topic_matches(
+                    text_value=post_text,
+                    tid=int(tid),
                 )
-            except Exception:
-                pass
+                is_stale_topic = bool(topic_matches)
+                try:
+                    self._decision_log(
+                        {
+                            "decision_type": "post_topic_freshness",
+                            "run_id": getattr(self, "memory_run_id", None),
+                            "agent_user_id": int(getattr(self, "user_id", -1) or -1),
+                            "agent_name": getattr(self, "name", None),
+                            "tid": int(tid),
+                            "attempt": int(attempt),
+                            "stale_topic": bool(is_stale_topic),
+                            "topic_title": fingerprint.get("title") or "",
+                            "topic_entities": fingerprint.get("entities") or [],
+                            "recent_matches": topic_matches,
+                        }
+                    )
+                except Exception:
+                    pass
             if is_stale_topic:
                 novelty_avoid_titles = [
                     match.get("title")
@@ -7973,8 +7973,6 @@ class Agent(object):
             max_turns=1,
         )
 
-        emotion_eval = self._extract_optional_emotion_eval(u2, u1)
-
         post_text = self._extract_generated_chat_content(
             u2, u1, prompt_hint=link_prompt, skip_emotion_like=True
         )
@@ -7984,6 +7982,8 @@ class Agent(object):
         post_text = self._strip_reproduced_article_content(post_text, article.summary)
         # Avoid markdown emphasis causing bold rendering in the UI.
         post_text = post_text.replace("*", "")
+
+        emotion_eval = self._extract_optional_emotion_eval(u2, u1)
 
         post_text, length_meta = self._enforce_text_limits(
             text=post_text,
@@ -8190,8 +8190,6 @@ class Agent(object):
                 max_turns=1,
             )
 
-            emotion_eval = self._extract_optional_emotion_eval(u2, u1)
-
             post_text = self._extract_generated_chat_content(
                 u2, u1, prompt_hint=image_prompt, skip_emotion_like=True
             )
@@ -8199,6 +8197,8 @@ class Agent(object):
             if len(post_text) < 3:
                 _release_image()
                 return None
+
+            emotion_eval = self._extract_optional_emotion_eval(u2, u1)
 
             if self._is_recent_duplicate(post_text):
                 logging.info(
@@ -10498,8 +10498,6 @@ class Agent(object):
             max_turns=1,
         )
 
-        emotion_eval = self._extract_optional_emotion_eval(u2, u1)
-
         post_text = self._extract_generated_chat_content(
             u2, u1, prompt_hint=comment_prompt, skip_emotion_like=True
         )
@@ -10583,6 +10581,8 @@ class Agent(object):
         # avoid posting empty messages or SKIP signals from the LLM
         if len(post_text) < 3 or post_text.strip().upper() == "SKIP":
             return False
+
+        emotion_eval = self._extract_optional_emotion_eval(u2, u1)
 
         hashtags = self.__extract_components(post_text, c_type="hashtags")
         mentions = self.__extract_components(post_text, c_type="mentions")
@@ -10824,8 +10824,6 @@ class Agent(object):
             max_turns=1,
         )
 
-        emotion_eval = self._extract_optional_emotion_eval(u2, u1)
-
         post_text = self._extract_generated_chat_content(
             u2, u1, prompt_hint=share_prompt, skip_emotion_like=True
         )
@@ -10842,6 +10840,8 @@ class Agent(object):
             .replace("@,", "")
         )
         post_text = post_text.replace(f"@{self.name}", "")
+
+        emotion_eval = self._extract_optional_emotion_eval(u2, u1)
 
         # Strip reproduced article content from LLM output
         post_text = self._strip_reproduced_article_content(post_text, article_summary)
@@ -12563,8 +12563,6 @@ class Agent(object):
             max_turns=1,
         )
 
-        emotion_eval = self._extract_optional_emotion_eval(u2, u1)
-
         post_text = self._extract_generated_chat_content(
             u2, u1, prompt_hint=comment_image_prompt, skip_emotion_like=True
         )
@@ -12575,6 +12573,8 @@ class Agent(object):
         # avoid posting empty messages
         if len(post_text) < 3:
             return
+
+        emotion_eval = self._extract_optional_emotion_eval(u2, u1)
 
         hashtags = self.__extract_components(post_text, c_type="hashtags")
 
@@ -12692,6 +12692,10 @@ class Agent(object):
         if not text:
             return False
         normalized = text.lower().strip()
+        if "no emotions were found" in normalized:
+            return True
+        if "annotated sentence" in normalized and "emotion" in normalized:
+            return True
         allowed = {
             str(e).strip().lower()
             for e in (self.emotions or [])

@@ -145,4 +145,5 @@ def test_emotion_payload_detection_rejects_label_lists():
     assert agent._looks_like_emotion_payload("anger, disgust")
     assert agent._looks_like_emotion_payload("(desperation, fear)\n(amusement, concern)")
     assert agent._looks_like_emotion_payload("Admiration, disappointment, disgust, grief, irritation, outrage, sadness, sorrow")
+    assert agent._looks_like_emotion_payload("No emotions were found in this annotated sentence.")
     assert not agent._looks_like_emotion_payload("I cannot annotate emotions with this text. Is there something else I can help you with?")
