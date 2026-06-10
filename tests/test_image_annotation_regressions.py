@@ -147,3 +147,61 @@ def test_emotion_payload_detection_rejects_label_lists():
     assert agent._looks_like_emotion_payload("Admiration, disappointment, disgust, grief, irritation, outrage, sadness, sorrow")
     assert agent._looks_like_emotion_payload("No emotions were found in this annotated sentence.")
     assert not agent._looks_like_emotion_payload("I cannot annotate emotions with this text. Is there something else I can help you with?")
+
+
+def test_generated_content_ignores_trailing_emotion_annotation_message():
+    agent = Agent.__new__(Agent)
+    agent.emotions = [
+        "admiration",
+        "amusement",
+        "anger",
+        "annoyance",
+        "approval",
+        "caring",
+        "confusion",
+        "curiosity",
+        "desire",
+        "disappointment",
+        "disapproval",
+        "disgust",
+        "embarrassment",
+        "excitement",
+        "fear",
+        "gratitude",
+        "grief",
+        "joy",
+        "love",
+        "nervousness",
+        "optimism",
+        "pride",
+        "realization",
+        "relief",
+        "remorse",
+        "sadness",
+        "surprise",
+        "trust",
+    ]
+
+    class _ChatOwner:
+        def __init__(self):
+            self.chat_messages = {
+                object(): [
+                    {"content": "Real post body about policy and money."},
+                    {"content": "No emotions were found in this annotated sentence."},
+                ]
+            }
+
+        def last_message(self, peer_agent):
+            return {"content": "No emotions were found in this annotated sentence."}
+
+    owner = _ChatOwner()
+    peer = next(iter(owner.chat_messages))
+
+    extracted = agent._extract_generated_chat_content(
+        owner,
+        peer,
+        prompt_hint="prompt",
+        skip_emotion_like=True,
+    )
+
+    assert extracted == "Real post body about policy and money."
