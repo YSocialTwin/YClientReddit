@@ -128,7 +128,7 @@ class YClientBase(object):
             Path(__file__).resolve().parents[2] / "config_files" / "prompts.json",
             # YSocial forum defaults (available when running inside the monorepo).
             # These should override package-local defaults for forum mode.
-            Path(__file__).resolve().parents[4] / "data_schema" / "prompts_forum.json",
+            Path(__file__).resolve().parents[4] / "data_schema" / "prompts" / "en" / "prompts_forum.json",
         ]
         for candidate in candidate_defaults:
             try:
