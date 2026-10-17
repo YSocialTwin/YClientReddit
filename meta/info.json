@@ -2,7 +2,7 @@
   "plugin_name": "YClientReddit",
   "category": "Simulation Runtime Stack",
   "group": "Forum",
-  "description": "Client-side forum simulation runtime for Reddit-like YSocial scenarios.",
+  "description": "Runs the agents of a forum simulation (client side).",
   "authors": [
     "YSocialTwin"
   ],
