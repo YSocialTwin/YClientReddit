@@ -39,6 +39,7 @@ from y_client.news_feeds.feed_reader import NewsFeed
 from y_client.recsys.ContentRecSys import ContentRecSys
 from y_client.recsys.FollowRecSys import FollowRecSys
 from y_client.classes import Agent
+from y_client import prompt_store
 
 __all__ = ["FakeAgent"]
 
@@ -154,7 +155,7 @@ class FakeAgent(Agent):
         )
         sentiment = json.loads(response.__dict__["_content"].decode("utf-8"))
 
-        self.topics_opinions = "Your opinion on the topics you are interested in is: "
+        self.topics_opinions = prompt_store.get("base_agent__post__1")
         for s in sentiment:
             self.topics_opinions += f"{s['topic']}: {s['sentiment']} "
         if len(sentiment) == 0:
@@ -292,7 +293,7 @@ class FakeAgent(Agent):
             sentiment = json.loads(response.__dict__["_content"].decode("utf-8"))
 
             self.topics_opinions = (
-                "Your opinion on the topics of the post you are responding to are: "
+                prompt_store.get("base_agent__comment__1")
             )
             for s in sentiment:
                 self.topics_opinions += f"{s['topic']}: {s['sentiment']} "
@@ -411,7 +412,7 @@ class FakeAgent(Agent):
             sentiment = json.loads(response.__dict__["_content"].decode("utf-8"))
 
             self.topics_opinions = (
-                "Your opinion topics of the post you are responding to are: "
+                prompt_store.get("base_agent__share__1")
             )
             for s in sentiment:
                 self.topics_opinions += f"{s['topic']}: {s['sentiment']} "

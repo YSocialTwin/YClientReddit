@@ -17,6 +17,7 @@ from y_client.classes.base_agent import Agent
 from y_client.logger import log_execution_time
 from y_client import content_store
 from y_client.news_feeds.feed_reader import NewsFeed
+from y_client import prompt_store
 
 
 class PageAgent(Agent):
@@ -293,9 +294,10 @@ class PageAgent(Agent):
         rendered = eval(f'f"""{non_f_str}"""', kwargs)
         if isinstance(rendered, str):
             rendered = (
-                f"{rendered.rstrip()}\n\n"
-                "STYLE RULE: Do not use any dash characters. This includes U+2014 em dash, "
-                "U+2013 en dash, and ASCII minus sign. Use commas, periods, or parentheses instead."
+                prompt_store.prompt(
+                    "fake_page_agent__effify__1",
+                    v1=rendered.rstrip(),
+                )
             )
         return rendered
 

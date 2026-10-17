@@ -6,6 +6,7 @@ from requests import post
 
 from y_client.llm import AssistantAgent
 from y_client.opinion_dynamics.utils import get_opinion_group
+from y_client import prompt_store
 
 
 def llm_evaluation(
@@ -46,7 +47,7 @@ def llm_evaluation(
         prompt += " The following are the opinions of your friends:\n"
         for opinion_group, count in peer_groups:
             prompt += f"Opinion: '{opinion_group}' ({count})\n"
-    prompt += "\nAnswer with a single word among the options: AGREE|DISAGREE|NEUTRAL."
+    prompt += prompt_store.get("llm_evaluation__llm_evaluation__1")
 
     response = _llm_eval(llm_config, prompt)
     if "AGREE" in response.upper():
