@@ -37,5 +37,6 @@
   "base_agent__memory_build_conversation_cues__6": "Usa la continuità solo se rende più incisivo il tuo punto. Resta ancorato a questo thread.",
   "base_agent__memory_build_conversation_cues__7": "Usa solo una continuità lieve (ad es. un disaccordo ricorrente) ed evita affermazioni specifiche.",
   "fake_page_agent__effify__1": "{v1}\n\nREGOLA DI STILE: Non usare alcun carattere trattino. Questo include il trattino lungo U+2014, il trattino medio U+2013 e il segno meno ASCII. Usa invece virgole, punti o parentesi.",
-  "llm_evaluation__llm_evaluation__1": "\nRispondi con una sola parola tra le opzioni: AGREE|DISAGREE|NEUTRAL."
+  "llm_evaluation__llm_evaluation__1": "\nRispondi con una sola parola tra le opzioni: AGREE|DISAGREE|NEUTRAL.",
+  "custom_features_persona": "Ulteriori dettagli personali: {details}."
 }
