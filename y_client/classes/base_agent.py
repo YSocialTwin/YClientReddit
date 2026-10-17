@@ -22,7 +22,7 @@ import hashlib
 import os
 from typing import Dict, List, Optional, Union
 from y_client.llm import AssistantAgent
-from y_client import prompt_store
+from y_client import prompt_store, protocol_tokens
 
 try:
     from yclient_memory.contracts import (
@@ -7283,7 +7283,12 @@ class Agent(object):
             kwargs["interests"] = []
 
         kwargs["self"] = self
-        rendered = eval(f'f"""{non_f_str}"""', kwargs)
+        # The persona clause is a closed field; prompts saved with the old marker keep working.
+        non_f_str = non_f_str.replace(
+            "{self._custom_features_persona_clause()}", "{custom_features_clause}"
+        )
+        kwargs.setdefault("custom_features_clause", self._custom_features_persona_clause())
+        rendered = prompt_store.render(non_f_str, **kwargs)
         if isinstance(rendered, str):
             rendered = f"{rendered.rstrip()}\n\n{NO_EM_EN_DASH_PROMPT_RULE}"
         return rendered
@@ -7305,7 +7310,7 @@ class Agent(object):
         return "Additional personal details: " + "; ".join(parts) + "."
 
     def _augment_roleplay_prompt_with_custom_features(self, prompt):
-        marker = "{self._custom_features_persona_clause()}"
+        marker = "{custom_features_clause}"
         if not isinstance(prompt, str) or marker in prompt:
             return prompt
         return f"{prompt.rstrip()}\n\n{marker}"
@@ -11404,15 +11409,15 @@ class Agent(object):
             "content_id": post_id,
         }
 
-        if "RIGHT" in text.split():
+        if protocol_tokens.has_token(text, protocol_tokens.RIGHT):
             data["vote"] = "R"
             st = json.dumps(data)
 
-        elif "LEFT" in text.split():
+        elif protocol_tokens.has_token(text, protocol_tokens.LEFT):
             data["vote"] = "D"
             st = json.dumps(data)
 
-        elif "NONE" in text.split():
+        elif protocol_tokens.has_token(text, protocol_tokens.NONE):
             data["vote"] = "U"
             st = json.dumps(data)
         else:
@@ -11480,7 +11485,7 @@ class Agent(object):
         u1.reset()
         u2.reset()
 
-        if "COMMENT" in text.split():
+        if protocol_tokens.has_token(text, protocol_tokens.COMMENT):
             candidates = json.loads(self.read())
             if len(candidates) > 0:
                 seed_post_id = int(random.sample(candidates, min(1, len(candidates)))[0])
@@ -11505,10 +11510,10 @@ class Agent(object):
                     else:
                         self.reaction(int(seed_post_id), check_follow=False, tid=tid)
 
-        elif "POST" in text.split():
+        elif protocol_tokens.has_token(text, protocol_tokens.POST):
             self.post(tid=tid)
 
-        elif "READ" in text.split():
+        elif protocol_tokens.has_token(text, protocol_tokens.READ):
             candidates = json.loads(self.read())
             try:
                 selected_post = random.sample(candidates, min(1, len(candidates)))
@@ -11518,7 +11523,7 @@ class Agent(object):
             except:
                 pass
 
-        # elif "REPLY" in text.split():
+        # elif protocol_tokens.has_token(text, protocol_tokens.REPLY):
         #    selected_post = json.loads(self.read_mentions())
         #    if "status" not in selected_post:
         #        self.comment(
@@ -11527,7 +11532,7 @@ class Agent(object):
         #            tid=tid,
         #        )
 
-        elif "SEARCH" in text.split():
+        elif protocol_tokens.has_token(text, protocol_tokens.SEARCH):
             candidates = json.loads(self.search())
             if "status" not in candidates and len(candidates) > 0:
                 seed_post_id = int(random.sample(candidates, min(1, len(candidates)))[0])
@@ -11551,7 +11556,7 @@ class Agent(object):
                     else:
                         self.reaction(int(seed_post_id), check_follow=False, tid=tid)
 
-        elif "FOLLOW" in text.split():
+        elif protocol_tokens.has_token(text, protocol_tokens.FOLLOW):
             candidates = self.search_follow()
             if len(candidates) > 0:
                 tot = sum([float(v) for v in candidates.values()])
@@ -11565,7 +11570,7 @@ class Agent(object):
 
         # Forum keeps backward compatibility with older NEWS probabilities by treating
         # NEWS as a link-sharing alias.
-        elif "NEWS" in text.split():
+        elif protocol_tokens.has_token(text, protocol_tokens.NEWS):
             article, website = self.select_link(tid=tid)
             if article and website and not isinstance(article, str):
                 self.share_link(tid=tid, article=article, website=website)
@@ -11575,7 +11580,7 @@ class Agent(object):
                     self.name,
                 )
 
-        elif "SHARE_LINK" in text.split():
+        elif protocol_tokens.has_token(text, protocol_tokens.SHARE_LINK):
             article, website = self.select_link(tid=tid)
             if article and website and not isinstance(article, str):
                 self.share_link(tid=tid, article=article, website=website)
@@ -11585,7 +11590,7 @@ class Agent(object):
                     self.name,
                 )
 
-        elif "SHARE_IMAGE" in text.split():
+        elif protocol_tokens.has_token(text, protocol_tokens.SHARE_IMAGE):
             image_post = self.select_standalone_image(tid=tid)
             if image_post:
                 self.share_image(tid=tid, image_post=image_post)
@@ -11595,13 +11600,13 @@ class Agent(object):
                     self.name,
                 )
 
-        elif "SHARE" in text.split():
+        elif protocol_tokens.has_token(text, protocol_tokens.SHARE):
             logging.info(
                 "Agent %s: LLM selected SHARE, but share is disabled; skipping.",
                 self.name,
             )
 
-        elif "CAST" in text.split():
+        elif protocol_tokens.has_token(text, protocol_tokens.CAST):
             candidates = json.loads(self.read())
             try:
                 selected_post = random.sample(candidates, min(1, len(candidates)))
@@ -11609,7 +11614,7 @@ class Agent(object):
             except:
                 pass
 
-        elif "IMAGE" in text.split():
+        elif protocol_tokens.has_token(text, protocol_tokens.IMAGE):
             image, article_id = self.select_image(tid=tid)
             if image is not None:
                 self.comment_image(image, tid=tid, article_id=article_id)

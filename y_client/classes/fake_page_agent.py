@@ -202,7 +202,7 @@ class FakePageAgent(PageAgent):
             str: The evaluated f-string with placeholders replaced by values
         """
         kwargs["self"] = self
-        rendered = eval(f'f"""{non_f_str}"""', kwargs)
+        rendered = prompt_store.render(non_f_str, **kwargs)
         if isinstance(rendered, str):
             rendered = (
                 prompt_store.prompt(

@@ -39,7 +39,7 @@ from y_client.news_feeds.feed_reader import NewsFeed
 from y_client.recsys.ContentRecSys import ContentRecSys
 from y_client.recsys.FollowRecSys import FollowRecSys
 from y_client.classes import Agent
-from y_client import prompt_store
+from y_client import prompt_store, protocol_tokens
 
 __all__ = ["FakeAgent"]
 
@@ -460,7 +460,7 @@ class FakeAgent(Agent):
 
 
 
-        if dcision == "YES":
+        if dcision == protocol_tokens.YES:
             st = json.dumps(
                 {
                     "user_id": self.user_id,
@@ -471,7 +471,7 @@ class FakeAgent(Agent):
             )
             flag = "follow"
 
-        elif dcision == "NO":
+        elif dcision == protocol_tokens.NO:
             st = json.dumps(
                 {
                     "user_id": self.user_id,
@@ -633,7 +633,7 @@ class FakeAgent(Agent):
         faker = Faker()
         decision = faker.random_element(["YES", "NO"])
 
-        if decision == "YES":
+        if decision == protocol_tokens.YES:
             if action == "follow":
                 self.follow(post_id=post_id, action=action, tid=tid)
                 return action
@@ -750,15 +750,15 @@ class FakeAgent(Agent):
             "content_id": post_id,
         }
 
-        if decisions == "RIGHT":
+        if decisions == protocol_tokens.RIGHT:
             data["vote"] = "R"
             st = json.dumps(data)
 
-        elif decisions == "LEFT":
+        elif decisions == protocol_tokens.LEFT:
             data["vote"] = "D"
             st = json.dumps(data)
 
-        elif decisions == "NONE":
+        elif decisions == protocol_tokens.NONE:
             data["vote"] = "U"
             st = json.dumps(data)
         else:
@@ -802,7 +802,7 @@ class FakeAgent(Agent):
         if action == "NEWS":
             action = "SHARE_LINK"
 
-        if action == "COMMENT":
+        if action == protocol_tokens.COMMENT:
             candidates = json.loads(self.read())
             if len(candidates) > 0:
                 selected_post = random.sample(candidates, 1)
@@ -813,10 +813,10 @@ class FakeAgent(Agent):
                 )
                 self.reaction(int(selected_post[0]), check_follow=False, tid=tid)
 
-        elif action == "POST":
+        elif action == protocol_tokens.POST:
             self.post(tid=tid)
 
-        elif action == "READ":
+        elif action == protocol_tokens.READ:
             candidates = json.loads(self.read())
             try:
                 selected_post = random.sample(candidates, 1)
@@ -824,7 +824,7 @@ class FakeAgent(Agent):
             except:
                 pass
 
-        elif action == "SEARCH":
+        elif action == protocol_tokens.SEARCH:
             candidates = json.loads(self.search())
             if "status" not in candidates and len(candidates) > 0:
                 selected_post = random.sample(candidates, 1)
@@ -835,7 +835,7 @@ class FakeAgent(Agent):
                 )
                 self.reaction(int(selected_post[0]), check_follow=False, tid=tid)
 
-        elif action == "FOLLOW":
+        elif action == protocol_tokens.FOLLOW:
             if self.probability_of_daily_follow > 0:
                 candidates = self.search_follow()
                 if len(candidates) > 0:
@@ -848,7 +848,7 @@ class FakeAgent(Agent):
                     )[0]
                     self.follow(tid=tid, target=selected, action="follow")
 
-        elif action == "SHARE":
+        elif action == protocol_tokens.SHARE:
             candidates = json.loads(self.read(article=True))
             if len(candidates) > 0:
                 selected_post = random.sample(candidates, 1)
@@ -864,7 +864,7 @@ class FakeAgent(Agent):
             if image_post:
                 self.share_image(tid=tid, image_post=image_post)
 
-        elif action == "CAST":
+        elif action == protocol_tokens.CAST:
             candidates = json.loads(self.read())
             try:
                 selected_post = random.sample(candidates, 1)
@@ -872,7 +872,7 @@ class FakeAgent(Agent):
             except:
                 pass
 
-        elif action == "IMAGE":
+        elif action == protocol_tokens.IMAGE:
             image, article_id = self.select_image(tid=tid)
             if image is not None:
                 self.comment_image(image, tid=tid, article_id=article_id)
