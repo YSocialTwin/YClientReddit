@@ -15,6 +15,7 @@ from requests import get, post
 import json
 import numpy as np
 import re
+from y_client.hashtag_text import HASHTAG_PATTERN
 import logging
 import uuid
 import math
@@ -7414,7 +7415,7 @@ class Agent(object):
         """
         # Define the regex pattern
         if c_type == "hashtags":
-            pattern = re.compile(r"#\w+")
+            pattern = re.compile(HASHTAG_PATTERN)
         elif c_type == "mentions":
             pattern = re.compile(r"@\w+")
         else:
