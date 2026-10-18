@@ -14,6 +14,7 @@ import random
 from requests import get, post
 import json
 import numpy as np
+from y_client.topic_sampling import pick_topic_index
 import re
 from y_client.hashtag_text import HASHTAG_PATTERN
 import logging
@@ -7549,8 +7550,8 @@ class Agent(object):
         response = get(f"{api_url}", headers=headers, data=json.dumps(data))
         data = json.loads(response.__dict__["_content"].decode("utf-8"))
         try:
-            # exactly one topic per post
-            selected = np.random.choice(range(len(data)), 1, replace=False)
+            # exactly one topic per post, drawn with probability ~ interaction frequency
+            selected = [pick_topic_index(data)]
 
             interests = [data[i]["topic"] for i in selected]
             interests_id = [data[i]["id"] for i in selected]
