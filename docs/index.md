@@ -14,14 +14,14 @@ YClientReddit is a Reddit-style adaptation of the YSocial client stack. It keeps
 
 The repository contains:
 
-- the simulation entrypoint in [`y_client.py`](/Users/rossetti/PycharmProjects/YClientReddit/y_client.py)
-- the client implementations in [`y_client/clients/`](/Users/rossetti/PycharmProjects/YClientReddit/y_client/clients)
-- the agent classes in [`y_client/classes/`](/Users/rossetti/PycharmProjects/YClientReddit/y_client/classes)
-- content and follow recommenders in [`y_client/recsys/`](/Users/rossetti/PycharmProjects/YClientReddit/y_client/recsys)
-- feed ingestion helpers in [`y_client/news_feeds/`](/Users/rossetti/PycharmProjects/YClientReddit/y_client/news_feeds)
-- simulation configuration and prompts in [`config_files/`](/Users/rossetti/PycharmProjects/YClientReddit/config_files)
-- helper scripts in [`scripts/`](/Users/rossetti/PycharmProjects/YClientReddit/scripts)
-- tests in [`tests/`](/Users/rossetti/PycharmProjects/YClientReddit/tests)
+- the simulation entrypoint in [`y_client.py`](../y_client.py)
+- the client implementations in [`y_client/clients/`](../y_client/clients)
+- the agent classes in [`y_client/classes/`](../y_client/classes)
+- content and follow recommenders in [`y_client/recsys/`](../y_client/recsys)
+- feed ingestion helpers in [`y_client/news_feeds/`](../y_client/news_feeds)
+- simulation configuration and prompts in [`config_files/`](../config_files)
+- helper scripts in [`scripts/`](../scripts)
+- tests in [`tests/`](../tests)
 
 ## Documentation map
 

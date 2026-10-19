@@ -17,8 +17,8 @@ The end state is:
 
 This pipeline builds directly on the prior analysis in:
 
-- [docs/agent_memory_report.md](/Users/rossetti/PycharmProjects/YClientReddit/docs/agent_memory_report.md)
-- [docs/agent_memory_parametric_refactor_report.md](/Users/rossetti/PycharmProjects/YClientReddit/docs/agent_memory_parametric_refactor_report.md)
+- [docs/agent_memory_report.md](agent_memory_report.md)
+- [docs/agent_memory_parametric_refactor_report.md](agent_memory_parametric_refactor_report.md)
 
 ## Target Outcome
 

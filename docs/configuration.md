@@ -1,6 +1,6 @@
 # Configuration
 
-The main runtime configuration lives in [`config_files/config.json`](/Users/rossetti/PycharmProjects/YClientReddit/config_files/config.json).
+The main runtime configuration lives in [`config_files/config.json`](../config_files/config.json).
 
 ## Top-level sections
 
@@ -189,7 +189,7 @@ Current committed fields:
 
 ## Prompt configuration
 
-Prompt templates live in [`config_files/prompts.json`](/Users/rossetti/PycharmProjects/YClientReddit/config_files/prompts.json).
+Prompt templates live in [`config_files/prompts.json`](../config_files/prompts.json).
 
 They drive:
 

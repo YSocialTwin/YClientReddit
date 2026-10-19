@@ -2,7 +2,7 @@
 
 ## Standard simulation run
 
-Use [`y_client.py`](/Users/rossetti/PycharmProjects/YClientReddit/y_client.py) for normal runs.
+Use [`y_client.py`](../y_client.py) for normal runs.
 
 Example:
 
@@ -53,7 +53,7 @@ python y_client.py \
 
 ## Running from the helper script
 
-[`scripts/run_forum_simulation.py`](/Users/rossetti/PycharmProjects/YClientReddit/scripts/run_forum_simulation.py) is a programmatic runner useful for reproducible or integration-driven runs.
+[`scripts/run_forum_simulation.py`](../scripts/run_forum_simulation.py) is a programmatic runner useful for reproducible or integration-driven runs.
 
 Example:
 
@@ -70,8 +70,8 @@ python scripts/run_forum_simulation.py \
 
 Typical artifacts are written under:
 
-- [`experiments/`](/Users/rossetti/PycharmProjects/YClientReddit/experiments)
-- [`run_outputs/`](/Users/rossetti/PycharmProjects/YClientReddit/run_outputs)
+- [`experiments/`](../experiments)
+- [`run_outputs/`](../run_outputs)
 
 Common generated files:
 

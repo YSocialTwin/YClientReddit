@@ -2,7 +2,7 @@
 
 ## Scope
 
-This report analyzes the agent memory implementation in this repository, centered on [`y_client/classes/base_agent.py`](/Users/rossetti/PycharmProjects/YClientReddit/y_client/classes/base_agent.py), plus its configuration in [`config_files/config.json`](/Users/rossetti/PycharmProjects/YClientReddit/config_files/config.json), memory prompts in [`config_files/prompts.json`](/Users/rossetti/PycharmProjects/YClientReddit/config_files/prompts.json), and memory-focused tests in [`tests/test_forum_memory_prompt_mode.py`](/Users/rossetti/PycharmProjects/YClientReddit/tests/test_forum_memory_prompt_mode.py) and [`tests/test_high_affect_memory_callback.py`](/Users/rossetti/PycharmProjects/YClientReddit/tests/test_high_affect_memory_callback.py).
+This report analyzes the agent memory implementation in this repository, centered on [`y_client/classes/base_agent.py`](../y_client/classes/base_agent.py), plus its configuration in [`config_files/config.json`](../config_files/config.json), memory prompts in [`config_files/prompts.json`](../config_files/prompts.json), and memory-focused tests in [`tests/test_forum_memory_prompt_mode.py`](../tests/test_forum_memory_prompt_mode.py) and [`tests/test_high_affect_memory_callback.py`](../tests/test_high_affect_memory_callback.py).
 
 The implementation is substantial and is not just a prompt add-on. It is a hybrid memory subsystem with:
 
@@ -44,7 +44,7 @@ So the full implementation is broader than what is currently enabled by default.
 
 ## Primary Implementation Location
 
-The memory subsystem is concentrated in [`y_client/classes/base_agent.py`](/Users/rossetti/PycharmProjects/YClientReddit/y_client/classes/base_agent.py). The relevant areas are:
+The memory subsystem is concentrated in [`y_client/classes/base_agent.py`](../y_client/classes/base_agent.py). The relevant areas are:
 
 - initialization and configuration: around `_init_memory_config`
 - utility and retrieval helpers: `_memory_api_post`, `_memory_fetch_context`, `_memory_search`
@@ -139,7 +139,7 @@ The subsystem is not implementing a permanent long-term persona memory across se
 
 ## Configuration Surface
 
-The memory subsystem has a large configuration surface under `agents` in [`config_files/config.json`](/Users/rossetti/PycharmProjects/YClientReddit/config_files/config.json). Categories:
+The memory subsystem has a large configuration surface under `agents` in [`config_files/config.json`](../config_files/config.json). Categories:
 
 ### Core enablement and prompt budgeting
 
@@ -813,7 +813,7 @@ In effect, reflections are the closest thing this implementation has to true “
 
 ## Prompt Templates and Their Role
 
-The memory subsystem depends heavily on prompt templates in [`config_files/prompts.json`](/Users/rossetti/PycharmProjects/YClientReddit/config_files/prompts.json). Relevant prompts:
+The memory subsystem depends heavily on prompt templates in [`config_files/prompts.json`](../config_files/prompts.json). Relevant prompts:
 
 - `handler_memory_reply_planner`
 - `handler_memory_interaction_note`
@@ -941,8 +941,8 @@ The design is clearly aware that memory features create hallucination risk and s
 
 Memory-focused tests are concentrated in:
 
-- [`tests/test_forum_memory_prompt_mode.py`](/Users/rossetti/PycharmProjects/YClientReddit/tests/test_forum_memory_prompt_mode.py)
-- [`tests/test_high_affect_memory_callback.py`](/Users/rossetti/PycharmProjects/YClientReddit/tests/test_high_affect_memory_callback.py)
+- [`tests/test_forum_memory_prompt_mode.py`](../tests/test_forum_memory_prompt_mode.py)
+- [`tests/test_high_affect_memory_callback.py`](../tests/test_high_affect_memory_callback.py)
 
 ### What is covered well
 

@@ -16,7 +16,7 @@ populate_news_feeds.py  RSS feed generation helper
 
 ## Main execution flow
 
-The standard CLI flow in [`y_client.py`](/Users/rossetti/PycharmProjects/YClientReddit/y_client.py) is:
+The standard CLI flow in [`y_client.py`](../y_client.py) is:
 
 1. Parse CLI arguments.
 2. Load config and prompts.
@@ -33,8 +33,8 @@ The standard CLI flow in [`y_client.py`](/Users/rossetti/PycharmProjects/YClient
 
 Contains the top-level simulation client implementations:
 
-- [`client_base.py`](/Users/rossetti/PycharmProjects/YClientReddit/y_client/clients/client_base.py)
-- [`client_web.py`](/Users/rossetti/PycharmProjects/YClientReddit/y_client/clients/client_web.py)
+- [`client_base.py`](../y_client/clients/client_base.py)
+- [`client_web.py`](../y_client/clients/client_web.py)
 
 Responsibilities:
 
@@ -49,11 +49,11 @@ Responsibilities:
 
 Contains the social actors and time model:
 
-- [`base_agent.py`](/Users/rossetti/PycharmProjects/YClientReddit/y_client/classes/base_agent.py)
-- [`page_agent.py`](/Users/rossetti/PycharmProjects/YClientReddit/y_client/classes/page_agent.py)
-- [`fake_base_agent.py`](/Users/rossetti/PycharmProjects/YClientReddit/y_client/classes/fake_base_agent.py)
-- [`annotator.py`](/Users/rossetti/PycharmProjects/YClientReddit/y_client/classes/annotator.py)
-- [`time.py`](/Users/rossetti/PycharmProjects/YClientReddit/y_client/classes/time.py)
+- [`base_agent.py`](../y_client/classes/base_agent.py)
+- [`page_agent.py`](../y_client/classes/page_agent.py)
+- [`fake_base_agent.py`](../y_client/classes/fake_base_agent.py)
+- [`annotator.py`](../y_client/classes/annotator.py)
+- [`time.py`](../y_client/classes/time.py)
 
 Responsibilities:
 
@@ -93,7 +93,7 @@ This file is an integration bridge toward the externalized `yclient-memory` pack
 
 File:
 
-- [`y_client/clients/client_base.py`](/Users/rossetti/PycharmProjects/YClientReddit/y_client/clients/client_base.py)
+- [`y_client/clients/client_base.py`](../y_client/clients/client_base.py)
 
 Characteristics:
 
@@ -106,7 +106,7 @@ Characteristics:
 
 File:
 
-- [`y_client/clients/client_web.py`](/Users/rossetti/PycharmProjects/YClientReddit/y_client/clients/client_web.py)
+- [`y_client/clients/client_web.py`](../y_client/clients/client_web.py)
 
 Characteristics:
 
@@ -122,7 +122,7 @@ Characteristics:
 
 Defined in:
 
-- [`y_client/classes/base_agent.py`](/Users/rossetti/PycharmProjects/YClientReddit/y_client/classes/base_agent.py)
+- [`y_client/classes/base_agent.py`](../y_client/classes/base_agent.py)
 
 This is the primary behavior engine for Reddit-style users.
 
@@ -139,7 +139,7 @@ Major responsibilities:
 
 Defined in:
 
-- [`y_client/classes/page_agent.py`](/Users/rossetti/PycharmProjects/YClientReddit/y_client/classes/page_agent.py)
+- [`y_client/classes/page_agent.py`](../y_client/classes/page_agent.py)
 
 This represents publisher-like accounts that primarily post news from feeds rather than participate like normal users.
 
@@ -147,7 +147,7 @@ This represents publisher-like accounts that primarily post news from feeds rath
 
 Defined in:
 
-- [`y_client/classes/fake_base_agent.py`](/Users/rossetti/PycharmProjects/YClientReddit/y_client/classes/fake_base_agent.py)
+- [`y_client/classes/fake_base_agent.py`](../y_client/classes/fake_base_agent.py)
 
 This provides a simpler agent variant useful for special flows and lower-complexity interactions.
 
