@@ -1,37 +1,94 @@
-# Reddit-like YSocial Client 
+# YClientReddit
 
-**This repository modify the original [YSocialClient](https://github.com/YSocialTwin/YClient) to support Reddit-like social simulation scenarios.**
+![YSocial](docs/Ysocial.png)
+
+> Runs the agents of a forum simulation (client side).
+
+## Overview
+
+This repository is the client of the **Forum** (Reddit-like) simulator of [YSocial](https://github.com/YSocialTwin/YSocial). It adapts the original [YClient](https://github.com/YSocialTwin/YClient) to forum-style scenarios and runs the LLM agents against [YServerReddit](https://github.com/YSocialTwin/YServerReddit). In [YSocial](https://github.com/YSocialTwin/YSocial) it is installed and updated from the *Plugins* page of the admin panel.
+
+For the features shared with the original client, see the [YClient README](https://github.com/YSocialTwin/YClient) and the official [documentation](https://ysocialtwin.github.io/).
+
+## Features
+
+- Agent prompts and interaction logic adapted to Reddit-style posting, commenting and voting
+- Data structures and simulation parameters that reflect the community and thread-based organisation of a forum
+- Recommender systems and feed generation aligned with Reddit-style content discovery
+- Additional configuration options and scripts for forum-specific experiments
+
+## Requirements
+
+- Python 3.10 or later
+- A running [YServerReddit](https://github.com/YSocialTwin/YServerReddit) (`servers.api` in the configuration)
+- An LLM endpoint compatible with the OpenAI API (`servers.llm` in the configuration)
+- SQLite by default, or PostgreSQL when using `YClientWeb` with `DATABASE_URL`
+
+## Installation
+
+```bash
+git clone https://github.com/YSocialTwin/YClientReddit.git
+cd YClientReddit
+python -m venv .venv && source .venv/bin/activate
+python -m pip install -r requirements_client.txt
+```
+
+## Usage
+
+Make sure YServerReddit and the LLM endpoint are reachable, then run:
+
+```bash
+python y_client.py \
+  --config_file config_files/config.json \
+  --feeds config_files/feed_small.json \
+  --prompts config_files/prompts.json
+```
+
+More options and workflows: [docs/running-simulations.md](docs/running-simulations.md).
+
+## Configuration
+
+The files in [`config_files/`](config_files) control a run: `config.json` (main configuration), `prompts.json` (prompt catalog), `rss_feeds.json` (default RSS feeds) and `feed_small.json` (a small feed set for lighter runs). See [docs/configuration.md](docs/configuration.md).
 
 ## Documentation
 
-The repository now includes MkDocs-based project documentation covering setup, configuration, architecture, memory behavior, scripts, tests, and usage examples.
-
-To preview the docs locally:
+- Official documentation: <https://ysocialtwin.github.io/>
+- Repository documentation (MkDocs, see [`mkdocs.yml`](mkdocs.yml)) in [`docs/`](docs): setup, configuration, architecture, memory, scripts, tests and examples. Preview it with:
 
 ```bash
 python -m pip install -r requirements_docs.txt
 mkdocs serve
 ```
 
-To build the static site:
+## Testing
 
 ```bash
-mkdocs build
+python -m pytest -q
 ```
 
-## About The Reddit Client
+See [docs/testing.md](docs/testing.md).
 
-This version of the YSocial client introduces several changes to make the platform more suitable for simulating Reddit-style social media environments. The focus of this README is to highlight the key differences and adaptations from the original YSocial client. For general usage instructions, features, and technical details, please refer to the [original YSocial client documentation](https://github.com/YSocialTwin/YClient) and the [official documentation](https://ysocialtwin.github.io/).
+## Contributing
 
-### Key Modifications for Reddit-Like Simulation
+Contributions are welcome. Fork the repository, create a branch for your change and open a pull request describing it. Run the tests before opening a pull request.
 
-- Adapted agent prompts and interaction logic to mimic Reddit-style posting, commenting, and voting.
-- Modified data structures and simulation parameters to reflect Reddit's community and thread-based organization.
-- Adjusted recommender systems and feed generation to better align with Reddit's content discovery mechanisms.
-- Additional configuration options and scripts for Reddit-specific experiments.
+## Citation
 
----
+If you use YSocial in your research, please cite:
 
-For all other features, setup instructions, and usage details, please consult the original YSocial client README and documentation.
+```bibtex
+@article{rossetti2026ysocial,
+  title={YSocial: An artificial intelligence powered social media virtual twin},
+  author={Rossetti, Giulio and Stella, Massimo and Cazabet, R{\'e}my and Abramski, Katherine and Citraro, Salvatore and Cau, Erica and Failla, Andrea and Morini, Virginia and Pansanella, Valentina},
+  journal={Big Data \& Society},
+  volume={13},
+  number={3},
+  pages={20539517261431576},
+  year={2026},
+  publisher={SAGE Publications Sage UK: London, England}
+}
+```
 
----
+## License
+
+Released under the GNU General Public License v3.0. See [LICENSE](LICENSE) for details.

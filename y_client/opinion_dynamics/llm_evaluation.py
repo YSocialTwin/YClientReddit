@@ -6,6 +6,7 @@ from requests import post
 
 from y_client.llm import AssistantAgent
 from y_client.opinion_dynamics.utils import get_opinion_group
+from y_client import prompt_store, protocol_tokens
 
 
 def llm_evaluation(
@@ -46,13 +47,13 @@ def llm_evaluation(
         prompt += " The following are the opinions of your friends:\n"
         for opinion_group, count in peer_groups:
             prompt += f"Opinion: '{opinion_group}' ({count})\n"
-    prompt += "\nAnswer with a single word among the options: AGREE|DISAGREE|NEUTRAL."
+    prompt += prompt_store.get("llm_evaluation__llm_evaluation__1")
 
     response = _llm_eval(llm_config, prompt)
-    if "AGREE" in response.upper():
+    if protocol_tokens.has_token(response, protocol_tokens.AGREE):
         _, updated_value = shift_class(x_group, y_group, Direction.AGREE, group_classes)
         return updated_value
-    if "DISAGREE" in response.upper():
+    if protocol_tokens.has_token(response, protocol_tokens.DISAGREE):
         _, updated_value = shift_class(x_group, y_group, Direction.DISAGREE, group_classes)
         return updated_value
     return float(x)

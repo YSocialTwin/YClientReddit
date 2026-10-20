@@ -2,7 +2,7 @@
 
 ## Overview
 
-The repository contains a substantial in-agent memory implementation centered on [`y_client/classes/base_agent.py`](/Users/rossetti/PycharmProjects/YClientReddit/y_client/classes/base_agent.py).
+The repository contains a substantial in-agent memory implementation centered on [`y_client/classes/base_agent.py`](../y_client/classes/base_agent.py).
 
 At a high level it provides:
 
@@ -44,7 +44,7 @@ Important memory-related areas include:
 
 ## Experimental external-memory bridge
 
-[`y_client/memory_runtime.py`](/Users/rossetti/PycharmProjects/YClientReddit/y_client/memory_runtime.py) provides an adapter-oriented bridge to the installable `yclient-memory` package.
+[`y_client/memory_runtime.py`](../y_client/memory_runtime.py) provides an adapter-oriented bridge to the installable `yclient-memory` package.
 
 That file is relevant if you are:
 

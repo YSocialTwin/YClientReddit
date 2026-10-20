@@ -31,7 +31,7 @@ Supported `cold_start` values in the current port:
 
 ## Configuration
 
-Opinion dynamics is configured under `simulation.opinion_dynamics` in [`config_files/config.json`](/Users/rossetti/PycharmProjects/YClientReddit/config_files/config.json).
+Opinion dynamics is configured under `simulation.opinion_dynamics` in [`config_files/config.json`](../config_files/config.json).
 
 Example:
 
@@ -101,7 +101,7 @@ That keeps the existing simulation behavior stable while enabling opinion tracki
 
 ## Tests
 
-Focused regression coverage lives in [`tests/test_opinion_dynamics.py`](/Users/rossetti/PycharmProjects/YClientReddit/tests/test_opinion_dynamics.py).
+Focused regression coverage lives in [`tests/test_opinion_dynamics.py`](../tests/test_opinion_dynamics.py).
 
 Current checks cover:
 

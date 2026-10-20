@@ -11,8 +11,8 @@ The repository supports two main news ingestion modes:
 
 Default feed files:
 
-- [`config_files/rss_feeds.json`](/Users/rossetti/PycharmProjects/YClientReddit/config_files/rss_feeds.json)
-- [`config_files/feed_small.json`](/Users/rossetti/PycharmProjects/YClientReddit/config_files/feed_small.json)
+- [`config_files/rss_feeds.json`](../config_files/rss_feeds.json)
+- [`config_files/feed_small.json`](../config_files/feed_small.json)
 
 These files contain feed definitions used by `YClientBase.load_rrs_endpoints(...)`.
 
@@ -24,11 +24,11 @@ When running:
 python y_client.py --news_source urls --urls_file urls.txt
 ```
 
-the client uses URL ingestion instead of RSS and processes articles with the URL reader logic from [`y_client/news_feeds/url_reader.py`](/Users/rossetti/PycharmProjects/YClientReddit/y_client/news_feeds/url_reader.py).
+the client uses URL ingestion instead of RSS and processes articles with the URL reader logic from [`y_client/news_feeds/url_reader.py`](../y_client/news_feeds/url_reader.py).
 
 ## Feed helper script
 
-[`populate_news_feeds.py`](/Users/rossetti/PycharmProjects/YClientReddit/populate_news_feeds.py) generates Bing RSS feed definitions from a topic list.
+[`populate_news_feeds.py`](../populate_news_feeds.py) generates Bing RSS feed definitions from a topic list.
 
 Example:
 
@@ -41,7 +41,7 @@ python populate_news_feeds.py \
 
 ## Feed-related package area
 
-The feed modules live under [`y_client/news_feeds/`](/Users/rossetti/PycharmProjects/YClientReddit/y_client/news_feeds).
+The feed modules live under [`y_client/news_feeds/`](../y_client/news_feeds).
 
 Important files:
 
@@ -57,7 +57,7 @@ These handle:
 
 ## Page agents and content publishing
 
-[`y_client/classes/page_agent.py`](/Users/rossetti/PycharmProjects/YClientReddit/y_client/classes/page_agent.py) represents news-page style agents that:
+[`y_client/classes/page_agent.py`](../y_client/classes/page_agent.py) represents news-page style agents that:
 
 - fetch articles from associated feeds
 - generate a post via prompts

@@ -14,7 +14,9 @@ import random
 from requests import get, post
 import json
 import numpy as np
+from y_client.topic_sampling import pick_topic_index
 import re
+from y_client.hashtag_text import HASHTAG_PATTERN
 import logging
 import uuid
 import math
@@ -22,6 +24,7 @@ import hashlib
 import os
 from typing import Dict, List, Optional, Union
 from y_client.llm import AssistantAgent
+from y_client import prompt_store, protocol_tokens
 
 try:
     from yclient_memory.contracts import (
@@ -130,8 +133,7 @@ _PROMPT_SCAFFOLD_PATTERNS = [
     re.compile(r"\byour interests\s*\(pick one\)\b", re.IGNORECASE),
 ]
 NO_EM_EN_DASH_PROMPT_RULE = (
-    "STYLE RULE: Do not use any dash characters. This includes U+2014 em dash, "
-    "U+2013 en dash, and ASCII minus sign. Use commas, periods, or parentheses instead."
+    prompt_store.get("base_agent__module__1")
 )
 _HIGH_AFFECT_CALLBACK_MARKERS = [
     "i remember",
@@ -690,11 +692,12 @@ class Agent(object):
             max_consecutive_auto_reply=1,
         )
         prompt = (
-            "Annotate the interaction for stress/reward scoring.\n"
-            f"Actor user id: {getattr(self, 'user_id', '')}\n"
-            f"Recipient user id: {target_user_id if target_user_id is not None else ''}\n"
-            f"Text:\n{text}\n"
-            "Return JSON only."
+            prompt_store.prompt(
+                "base_agent__annotate_stress_reward_text__1",
+                v1=getattr(self, 'user_id', ''),
+                v2=target_user_id if target_user_id is not None else '',
+                text=text,
+            )
         )
         try:
             response = annotator._generate_reply(prompt)
@@ -912,7 +915,7 @@ class Agent(object):
 
         rendered = ["Active system messages addressed to you for this round."]
         rendered.append(
-            "These are mandatory platform or moderator instructions for the content you are about to write. Follow them exactly."
+            prompt_store.get("base_agent__append_system_messages_to_prompt__1")
         )
         for item in messages:
             rendered.append(f"- [{item['type']}] {item['message']}")
@@ -945,9 +948,11 @@ class Agent(object):
             return ""
         level, label = self._stress_likert_bucket(state.get("stress", 0.0))
         return (
-            "Current stress level: "
-            f"{label} ({level}/5 on a five-point scale where 1 means none and 5 means extremely stressed). "
-            "Use this only as internal emotional context while writing."
+            prompt_store.prompt(
+                "base_agent__stress_prompt_block__1",
+                label=label,
+                level=level,
+            )
         )
 
     def _append_stress_level_to_prompt(self, *, base_prompt: str, tid: int):
@@ -3572,7 +3577,7 @@ class Agent(object):
             lines.append("posting style lately: " + ", ".join(norm_lines[:3]))
         if meme_lines:
             lines.append("recurring formats: " + ", ".join(meme_lines[:2]))
-        lines.append("use this only for tone and structure, not as a topic list")
+        lines.append(prompt_store.get("base_agent__memory_build_post_style_context_legacy__1"))
         meta["usage"] = "style_digest_only"
         return self._memory_truncate("\n".join(lines), 280), meta
 
@@ -3997,7 +4002,7 @@ class Agent(object):
 
         if embedding_degraded and retrieved <= 0:
             callback_hint = (
-                "Memory retrieval is degraded right now. Do not claim specific past interactions."
+                prompt_store.get("base_agent__memory_build_conversation_cues__1")
             )
             cues["callback_skip_reason"] = "degraded"
         elif cues["scope"] == "cold_start":
@@ -4008,8 +4013,10 @@ class Agent(object):
             cues["callback_skip_reason"] = "cold_start"
         elif subtle_mode and cross_thread_callback_candidate:
             callback_hint = (
-                f"If clearly relevant, you may use one brief continuity cue with {target}. "
-                "Do not force it or import unrelated stories."
+                prompt_store.prompt(
+                    "base_agent__memory_build_conversation_cues__4",
+                    target=target,
+                )
             )
         elif should_callback:
             callback_hint = (
@@ -4018,11 +4025,11 @@ class Agent(object):
         elif has_partial_signal:
             if subtle_mode:
                 callback_hint = (
-                    "Use continuity only if it sharpens the point. Stay anchored to this thread."
+                    prompt_store.get("base_agent__memory_build_conversation_cues__6")
                 )
             else:
                 callback_hint = (
-                    "Use only soft continuity (e.g., recurring disagreement) and avoid specific claims."
+                    prompt_store.get("base_agent__memory_build_conversation_cues__7")
                 )
             cues["callback_skip_reason"] = "below_min_score"
         else:
@@ -4050,15 +4057,15 @@ class Agent(object):
             tone_hint = "Keep it conversational and direct."
 
         if subtle_mode:
-            anecdote_hint = "Do not import unrelated anecdotes from other threads."
+            anecdote_hint = prompt_store.get("base_agent__memory_build_conversation_cues__2")
         elif should_callback and (trust >= 0.15 or humor >= 0.25):
             anecdote_hint = (
-                "A tiny shared-memory anecdote is fine, but only if it is clearly supported."
+                prompt_store.get("base_agent__memory_build_conversation_cues__3")
             )
         elif conflict >= 0.5:
             anecdote_hint = "Prefer argument continuity over personal anecdotes."
         else:
-            anecdote_hint = "Use anecdotes sparingly; only when they clarify your point."
+            anecdote_hint = prompt_store.get("base_agent__memory_build_conversation_cues__5")
 
         cues["callback_hint"] = callback_hint
         cues["argument_hint"] = argument_hint
@@ -4157,7 +4164,7 @@ class Agent(object):
             system_message=self.__effify(
                 self.prompts.get(
                     "handler_instructions_simple",
-                    "You are the Handler that specifies the actions to be taken.",
+                    prompt_store.get("base_agent__memory_plan_reply_strategy__1"),
                 )
             ),
             max_consecutive_auto_reply=0,
@@ -4327,7 +4334,7 @@ class Agent(object):
             system_message=self.__effify(
                 self.prompts.get(
                     "handler_instructions_simple",
-                    "You are the Handler that specifies the actions to be taken.",
+                    prompt_store.get("base_agent__memory_plan_reply_strategy__1"),
                 )
             ),
             max_consecutive_auto_reply=0,
@@ -5421,35 +5428,7 @@ class Agent(object):
         prompt = self.prompts.get("handler_memory_generate_reflections")
         if not prompt:
             prompt = (
-                "You are generating consolidated memory reflections for a simulated Reddit agent.\n"
-                "Build reflections that connect the agent to community dynamics, core stance, topics, and key relationships.\n"
-                "Output ONLY JSON with field 'reflections', where reflections is a list of 2-4 objects.\n"
-                "Each object fields:\n"
-                "- text: <= 280 chars, high-level inference grounded in evidence\n"
-                "- importance: float in [0,1]\n"
-                "- supporting_event_ids: list of numeric ids (can be empty)\n"
-                "- topic_tags: list of up to 4 short strings\n\n"
-                "- link_kind: one of [community, core, topic, relationship]\n\n"
-                "- optional facets object with:\n"
-                "  - topical_experience: short string\n"
-                "  - memorable_entities: list (usernames/post ids/short markers)\n"
-                "  - negative_experience: short string\n"
-                "  - behavior_labels: list from [harassment, spam, slur, dogpile, baiting, toxicity_escalation]\n\n"
-                "COMMUNITY DIGEST:\n{community_digest}\n\n"
-                "RELATIONSHIP HINT:\n{relationship_hint}\n\n"
-                "RELATIONSHIP ACTOR: {relationship_actor}\n"
-                "RELATIONSHIP TARGET: {relationship_target}\n"
-                "RELATIONSHIP TARGET ID: {relationship_target_id}\n"
-                "KNOWN USERNAMES: {known_usernames}\n\n"
-                "EVIDENCE:\n{evidence}\n\n"
-                "TRIGGER REASON: {reason}\n\n"
-                "Rules:\n"
-                "- Do not invent user names or events.\n"
-                "- If a username is known, prefer '@username' in reflection text.\n"
-                "- Avoid raw 'user_id' wording in text unless no username is available.\n"
-                "- If inappropriate behavior appears in evidence, use behavior labels and avoid repeating explicit abusive wording.\n"
-                "- Prefer one reflection per link_kind when evidence allows.\n"
-                "Output JSON only."
+                prompt_store.get("base_agent__memory_maybe_generate_reflections__1")
             )
 
         cfg = self.__get_fresh_llm_config()
@@ -5469,7 +5448,7 @@ class Agent(object):
             name="Handler",
             llm_config=cfg,
             system_message=self.__effify(
-                self.prompts.get("handler_instructions_simple", "You are the Handler that specifies the actions to be taken.")
+                self.prompts.get("handler_instructions_simple", prompt_store.get("base_agent__memory_plan_reply_strategy__1"))
             ),
             max_consecutive_auto_reply=0,
         )
@@ -5824,22 +5803,7 @@ class Agent(object):
         prompt = self.prompts.get("handler_memory_interaction_note")
         if not prompt:
             prompt = (
-                "You are writing a memory note for a simulated Reddit user.\n"
-                "Output ONLY a valid JSON object (no markdown) with fields:\n"
-                "- relation_label: one of [agree, disagree, funny, helpful, hostile, neutral]\n"
-                "- tone_label: one of [supportive, snarky, angry, curious, neutral]\n"
-                "- affinity_delta: float in [-1,1]\n"
-                "- conflict_delta: float in [-1,1]\n"
-                "- humor_delta: float in [-1,1]\n"
-                "- trust_delta: float in [-1,1]\n"
-                "- salient_claim: <=200 chars\n"
-                "- topics: list of up to 5 short strings\n\n"
-                "MEMORY CONTEXT:\n{memory_context_text}\n\n"
-                "INTERACTION:\n"
-                "- event_type: {event_type}\n"
-                "- replying to @{other_username}: {other_text}\n"
-                "- my text: {my_text}\n\n"
-                "Output JSON only."
+                prompt_store.get("base_agent__memory_llm_interaction_note__1")
             )
 
         cfg = self.__get_fresh_llm_config()
@@ -5860,7 +5824,7 @@ class Agent(object):
             name="Handler",
             llm_config=cfg,
             system_message=self.__effify(
-                self.prompts.get("handler_instructions_simple", "You are the Handler that specifies the actions to be taken.")
+                self.prompts.get("handler_instructions_simple", prompt_store.get("base_agent__memory_plan_reply_strategy__1"))
             ),
             max_consecutive_auto_reply=0,
         )
@@ -6111,20 +6075,7 @@ class Agent(object):
             prompt = self.prompts.get("handler_memory_resummarize_social_card")
             if not prompt:
                 prompt = (
-                    "You are updating a short social memory about another Reddit user.\n"
-                    "Output ONLY JSON: {\"summary_text\": \"...\"}.\n\n"
-                    "STATS: affinity={affinity:.2f}, conflict={conflict:.2f}, humor={humor:.2f}, trust={trust:.2f}\n"
-                    "OLD SUMMARY: {old_summary}\n"
-                    "EXISTING REFLECTIONS:\n{reflection_hint}\n"
-                    "RECENT EVIDENCE:\n{evidence_lines}\n\n"
-                    "Rules:\n"
-                    "- summary_text <= 400 chars\n"
-                    "- Include recurring topics and one memorable interaction marker.\n"
-                    "- Mention whether trust is rising/falling and whether friction is recurring.\n"
-                    "- If inappropriate behavior appears, use behavior labels only (harassment/spam/slur/dogpile/baiting/toxicity_escalation).\n"
-                    "- Do not quote explicit abusive language.\n"
-                    "- Write in plain English.\n"
-                    "- Output JSON only."
+                    prompt_store.get("base_agent__memory_upsert_social_card__1")
                 )
 
             evidence_lines = []
@@ -6165,7 +6116,7 @@ class Agent(object):
                 name="Handler",
                 llm_config=cfg,
                 system_message=self.__effify(
-                    self.prompts.get("handler_instructions_simple", "You are the Handler that specifies the actions to be taken.")
+                    self.prompts.get("handler_instructions_simple", prompt_store.get("base_agent__memory_plan_reply_strategy__1"))
                 ),
                 max_consecutive_auto_reply=0,
             )
@@ -6293,15 +6244,7 @@ class Agent(object):
             prompt = self.prompts.get("handler_memory_update_thread_card")
             if not prompt:
                 prompt = (
-                    "You are updating a short memory of a Reddit thread.\n"
-                    "Output ONLY JSON with fields:\n"
-                    "- gist_text: <= 500 chars summary of what this thread is about\n"
-                    "- my_role: one of [supporter, skeptic, joker, explainer, lurker, neutral]\n"
-                    "- participants_top: list of up to 6 usernames\n"
-                    "- entry_points: list of up to 5 post/comment ids that are good reply targets\n\n"
-                    "KNOWN REFLECTIONS:\n{reflection_hint}\n\n"
-                    "THREAD SNIPPET:\n{thread_snippet}\n\n"
-                    "Output JSON only."
+                    prompt_store.get("base_agent__memory_maybe_update_thread_card__1")
                 )
 
             snippet = (conv_text or "").strip()
@@ -6325,7 +6268,7 @@ class Agent(object):
                 name="Handler",
                 llm_config=cfg,
                 system_message=self.__effify(
-                    self.prompts.get("handler_instructions_simple", "You are the Handler that specifies the actions to be taken.")
+                    self.prompts.get("handler_instructions_simple", prompt_store.get("base_agent__memory_plan_reply_strategy__1"))
                 ),
                 max_consecutive_auto_reply=0,
             )
@@ -6422,20 +6365,7 @@ class Agent(object):
         prompt = self.prompts.get("handler_memory_update_community_digest")
         if not prompt:
             prompt = (
-                "You are updating a short 'community digest' for a simulated Reddit forum.\n"
-                "Output ONLY JSON with fields:\n"
-                "- digest_text: <= 700 chars describing how people usually start threads here\n"
-                "- top_topics: list of up to 8 topics\n"
-                "- norms: list of up to 6 lowercase style descriptors\n"
-                "- memes: list of up to 6 lowercase recurring post formats\n"
-                "- polarizing_issues: list of up to 6 broad argument patterns\n\n"
-                "PREVIOUS DIGEST:\n{prev_digest}\n\n"
-                "RECENT ROOT POSTS:\n{recent_roots_text}\n\n"
-                "Rules:\n"
-                "- Summarize style and structure, not specific named shows, movies, or articles.\n"
-                "- Keep norms and memes abstract, lowercase, and reusable as a loose style guide.\n"
-                "- If you mention topics at all, keep them broad and generic.\n"
-                "Output JSON only."
+                prompt_store.get("base_agent__memory_maybe_update_community_digest__1")
             )
 
         root_lines = []
@@ -6475,7 +6405,7 @@ class Agent(object):
             name="Handler",
             llm_config=cfg,
             system_message=self.__effify(
-                self.prompts.get("handler_instructions_simple", "You are the Handler that specifies the actions to be taken.")
+                self.prompts.get("handler_instructions_simple", prompt_store.get("base_agent__memory_plan_reply_strategy__1"))
             ),
             max_consecutive_auto_reply=0,
         )
@@ -7354,8 +7284,17 @@ class Agent(object):
             kwargs["interest"] = []
             kwargs["interests"] = []
 
-        kwargs["self"] = self
-        rendered = eval(f'f"""{non_f_str}"""', kwargs)
+        kwargs["self"] = prompt_store.localize(self)  # profile values in the prompt language (English: self)
+        if "website" in kwargs:
+            kwargs["website"] = prompt_store.localize(kwargs["website"])
+        if "action" in kwargs:
+            kwargs["action"] = prompt_store.localize_value("action", kwargs["action"])
+        # The persona clause is a closed field; prompts saved with the old marker keep working.
+        non_f_str = non_f_str.replace(
+            "{self._custom_features_persona_clause()}", "{custom_features_clause}"
+        )
+        kwargs.setdefault("custom_features_clause", self._custom_features_persona_clause())
+        rendered = prompt_store.render(non_f_str, **kwargs)
         if isinstance(rendered, str):
             rendered = f"{rendered.rstrip()}\n\n{NO_EM_EN_DASH_PROMPT_RULE}"
         return rendered
@@ -7374,10 +7313,10 @@ class Agent(object):
             parts.append(f"{label}: {value}" if value else label)
         if not parts:
             return ""
-        return "Additional personal details: " + "; ".join(parts) + "."
+        return prompt_store.prompt("custom_features_persona", details="; ".join(parts))
 
     def _augment_roleplay_prompt_with_custom_features(self, prompt):
-        marker = "{self._custom_features_persona_clause()}"
+        marker = "{custom_features_clause}"
         if not isinstance(prompt, str) or marker in prompt:
             return prompt
         return f"{prompt.rstrip()}\n\n{marker}"
@@ -7477,7 +7416,7 @@ class Agent(object):
         """
         # Define the regex pattern
         if c_type == "hashtags":
-            pattern = re.compile(r"#\w+")
+            pattern = re.compile(HASHTAG_PATTERN)
         elif c_type == "mentions":
             pattern = re.compile(r"@\w+")
         else:
@@ -7611,11 +7550,8 @@ class Agent(object):
         response = get(f"{api_url}", headers=headers, data=json.dumps(data))
         data = json.loads(response.__dict__["_content"].decode("utf-8"))
         try:
-            # select a random interest without replacement
-            if len(data) >= 3:
-                selected = np.random.choice(range(len(data)), np.random.randint(1, 3), replace=False)
-            else:
-                selected = np.random.choice(range(len(data)), len(data), replace=False)
+            # exactly one topic per post, drawn with probability ~ interaction count (moving window)
+            selected = [pick_topic_index(data)]
 
             interests = [data[i]["topic"] for i in selected]
             interests_id = [data[i]["id"] for i in selected]
@@ -7647,7 +7583,7 @@ class Agent(object):
         response = post(f"{api_url}", headers={"Content-Type": "application/x-www-form-urlencoded"}, data=json.dumps(data))
         sentiment = json.loads(response.__dict__["_content"].decode("utf-8"))
 
-        self.topics_opinions = "Your opinion on the topics you are interested in is: "
+        self.topics_opinions = prompt_store.get("base_agent__post__1")
         for s in sentiment:
             self.topics_opinions += f"{s['topic']}: {s['sentiment']} "
         if len(sentiment) == 0:
@@ -7667,7 +7603,10 @@ class Agent(object):
         # Add variation prompt for subsequent posts to ensure different content
         post_prompt = self.__effify(self.prompts["handler_post"], interests=interests)
         if is_subsequent_post:
-            post_prompt = post_prompt + f"\n\nIMPORTANT: This is post #{self.posts_this_round + 1} - write about a COMPLETELY DIFFERENT topic than before. Pick a different interest."
+            post_prompt = post_prompt + prompt_store.prompt(
+                                            "base_agent__post__2",
+                                            v1=self.posts_this_round + 1,
+                                        )
 
         # Community style guidance can influence structure and tone, but not the topic.
         try:
@@ -7735,8 +7674,7 @@ class Agent(object):
             if attempt > 1:
                 prompt = (
                     post_prompt
-                    + "\n\nIMPORTANT: Do NOT repeat any previous posts. "
-                      "Write something meaningfully different with new phrasing."
+                    + prompt_store.get("base_agent__post__3")
                 )
             if attempt > 1 and novelty_avoid_titles:
                 prompt += (
@@ -8219,12 +8157,10 @@ class Agent(object):
                 u2.reset()
 
                 retry_prompt = (
-                    "WRITE A NEW CAPTION. Your previous attempt described the image "
-                    "instead of reacting to it emotionally. Write a SHORT reaction "
-                    "(not a description). DO NOT say what's in the image. "
-                    "Just react emotionally in 1 sentence, max 10 words. "
-                    "Examples: 'mood', 'me rn', 'this hits different', 'absolute legend'.\n\n"
-                    f"Previous bad attempt: {post_text}"
+                    prompt_store.prompt(
+                        "base_agent__share_image__1",
+                        post_text=post_text,
+                    )
                 )
 
                 u2.initiate_chat(
@@ -8925,7 +8861,7 @@ class Agent(object):
         styles.extend(
             [
                 ("QUESTION", "Challenging question that pressures evidence or expertise (3-15 words)."),
-                ("MEDIUM_ENGAGE", "2-3 sentence direct reply with disagreement/sarcasm when relevant."),
+                ("MEDIUM_ENGAGE", prompt_store.get("base_agent__build_comment_style_options__1")),
                 ("PERSONAL_ANECDOTE", "2-3 sentence personal anecdote tied to the argument; can still disagree."),
             ]
         )
@@ -9356,21 +9292,7 @@ class Agent(object):
             prompt = self.prompts.get("handler_thread_browse_decision")
             if not prompt:
                 prompt = (
-                    "You are browsing a Reddit thread like a real human.\n"
-                    "You are reading comments in order. At each step decide what to do next based on:\n"
-                    "- the content you just read\n"
-                    "- your persona\n"
-                    "- your interests\n"
-                    "- the subreddit vibe\n\n"
-                    "Choose ONE action by outputting ONLY its number.\n\n"
-                    "SUBREDDIT VIBE: {subreddit_vibe}\n"
-                    "YOUR INTERESTS: {interests_str}\n\n"
-                    "RECENTLY READ:\n{scan_snippets}\n\n"
-                    "ACTIONS:\n{options}\n\n"
-                    "Rules:\n"
-                    "- If you COMMENT: pick a specific comment to reply to (not your own).\n"
-                    "- If you have nothing meaningful to add: STOP.\n"
-                    "- Output ONLY a single number.\n"
+                    prompt_store.get("base_agent__select_comment_target_via_thread_browse__1")
                 )
 
             scan_snippets = "\n".join(read_lines)
@@ -9476,7 +9398,12 @@ class Agent(object):
                 txt = (opt.get("text") or "").strip()
                 if snippet_chars and len(txt) > snippet_chars:
                     txt = txt[: snippet_chars - 3].rstrip() + "..."
-                return f"COMMENT - reply to (id {opt.get('post_id')}) @{uname}: {txt}"
+                return prompt_store.prompt(
+                           "base_agent__opt_line__1",
+                           v1=opt.get('post_id'),
+                           uname=uname,
+                           txt=txt,
+                       )
 
             options_text = "\n".join([f"{i}. {_opt_line(opt)}" for i, opt in enumerate(options, start=1)])
             interests_str = ", ".join(current_interests) if current_interests else "none"
@@ -9505,7 +9432,7 @@ class Agent(object):
                 system_message=self.__effify(
                     self.prompts.get(
                         "handler_instructions_simple",
-                        "You are the Handler that specifies the actions to be taken.",
+                        prompt_store.get("base_agent__memory_plan_reply_strategy__1"),
                     )
                 ),
                 max_consecutive_auto_reply=0,
@@ -9893,7 +9820,7 @@ class Agent(object):
         u2 = AssistantAgent(
             name="StyleSelector",
             llm_config=style_config,
-            system_message="You select response styles. Output only a number.",
+            system_message=prompt_store.get("base_agent__select_comment_style__1"),
             max_consecutive_auto_reply=0,
         )
 
@@ -9987,7 +9914,7 @@ class Agent(object):
         u2 = AssistantAgent(
             name="StyleSelector",
             llm_config=style_config,
-            system_message="You select sharing styles. Output only a number.",
+            system_message=prompt_store.get("base_agent__select_share_style__1"),
             max_consecutive_auto_reply=0,
         )
 
@@ -10180,7 +10107,7 @@ class Agent(object):
                             data=json.dumps(data))
             sentiment = json.loads(response.__dict__["_content"].decode("utf-8"))
 
-            self.topics_opinions = "Your opinion on the topics of the post you are responding to are: "
+            self.topics_opinions = prompt_store.get("base_agent__comment__1")
             for s in sentiment:
                 self.topics_opinions += f"{s['topic']}: {s['sentiment']} "
             if len(sentiment) == 0:
@@ -10284,8 +10211,7 @@ class Agent(object):
                                 memory_usage_requirement = requirement_template.strip()
                         else:
                             memory_usage_requirement = (
-                                "Use one recalled memory naturally in your reply. "
-                                "Do not invent events."
+                                prompt_store.get("base_agent__comment__2")
                             )
                         triggers = high_affect_signal.get("triggers")
                         if isinstance(triggers, dict) and triggers.get("incoming_anecdote"):
@@ -10798,7 +10724,7 @@ class Agent(object):
                             data=json.dumps(data))
             sentiment = json.loads(response.__dict__["_content"].decode("utf-8"))
 
-            self.topics_opinions = "Your opinion topics of the post you are responding to are: "
+            self.topics_opinions = prompt_store.get("base_agent__share__1")
             for s in sentiment:
                 self.topics_opinions += f"{s['topic']}: {s['sentiment']} "
             if len(sentiment) == 0:
@@ -11099,8 +11025,7 @@ class Agent(object):
             name="ModeratorHandler",
             llm_config=self.llm_config,
             system_message=(
-                "Read the content and decide whether it should be reported for moderation. "
-                "Reply with exactly one label: REPORT_TOXIC, REPORT_OFFENSIVE, or NONE."
+                prompt_store.get("base_agent__decide_report_type__1")
             ),
             max_consecutive_auto_reply=0,
         )
@@ -11109,11 +11034,10 @@ class Agent(object):
             u2.initiate_chat(
                 u1,
                 message=(
-                    "Classify the following content for moderation. "
-                    "Use REPORT_TOXIC for hateful, threatening, abusive, or toxic content. "
-                    "Use REPORT_OFFENSIVE for insulting, vulgar, or norm-breaking content that "
-                    "is offensive but not necessarily toxic. Use NONE otherwise.\n\n"
-                    f"##TEXT START##\n{post_text}\n##TEXT END##"
+                    prompt_store.prompt(
+                        "base_agent__decide_report_type__2",
+                        post_text=post_text,
+                    )
                 ),
                 silent=True,
                 max_turns=1,
@@ -11320,11 +11244,12 @@ class Agent(object):
         u2.initiate_chat(
             u1,
             message=(
-                "Another user has just "
-                f"{'followed' if action == 'follow' else 'unfollowed'} you.\n\n"
-                f"Their profile:\n{source_summary}\n\n"
-                f"Decide whether you want to {requested}. "
-                "Reply with ONLY YES or NO."
+                prompt_store.prompt(
+                    "base_agent__should_reciprocate_follow_event__1",
+                    v1='followed' if action == 'follow' else 'unfollowed',
+                    source_summary=source_summary,
+                    requested=requested,
+                )
             ),
             silent=True,
             max_turns=1,
@@ -11487,15 +11412,15 @@ class Agent(object):
             "content_id": post_id,
         }
 
-        if "RIGHT" in text.split():
+        if protocol_tokens.has_token(text, protocol_tokens.RIGHT):
             data["vote"] = "R"
             st = json.dumps(data)
 
-        elif "LEFT" in text.split():
+        elif protocol_tokens.has_token(text, protocol_tokens.LEFT):
             data["vote"] = "D"
             st = json.dumps(data)
 
-        elif "NONE" in text.split():
+        elif protocol_tokens.has_token(text, protocol_tokens.NONE):
             data["vote"] = "U"
             st = json.dumps(data)
         else:
@@ -11563,7 +11488,7 @@ class Agent(object):
         u1.reset()
         u2.reset()
 
-        if "COMMENT" in text.split():
+        if protocol_tokens.has_token(text, protocol_tokens.COMMENT):
             candidates = json.loads(self.read())
             if len(candidates) > 0:
                 seed_post_id = int(random.sample(candidates, min(1, len(candidates)))[0])
@@ -11588,10 +11513,10 @@ class Agent(object):
                     else:
                         self.reaction(int(seed_post_id), check_follow=False, tid=tid)
 
-        elif "POST" in text.split():
+        elif protocol_tokens.has_token(text, protocol_tokens.POST):
             self.post(tid=tid)
 
-        elif "READ" in text.split():
+        elif protocol_tokens.has_token(text, protocol_tokens.READ):
             candidates = json.loads(self.read())
             try:
                 selected_post = random.sample(candidates, min(1, len(candidates)))
@@ -11601,7 +11526,7 @@ class Agent(object):
             except:
                 pass
 
-        # elif "REPLY" in text.split():
+        # elif protocol_tokens.has_token(text, protocol_tokens.REPLY):
         #    selected_post = json.loads(self.read_mentions())
         #    if "status" not in selected_post:
         #        self.comment(
@@ -11610,7 +11535,7 @@ class Agent(object):
         #            tid=tid,
         #        )
 
-        elif "SEARCH" in text.split():
+        elif protocol_tokens.has_token(text, protocol_tokens.SEARCH):
             candidates = json.loads(self.search())
             if "status" not in candidates and len(candidates) > 0:
                 seed_post_id = int(random.sample(candidates, min(1, len(candidates)))[0])
@@ -11634,7 +11559,7 @@ class Agent(object):
                     else:
                         self.reaction(int(seed_post_id), check_follow=False, tid=tid)
 
-        elif "FOLLOW" in text.split():
+        elif protocol_tokens.has_token(text, protocol_tokens.FOLLOW):
             candidates = self.search_follow()
             if len(candidates) > 0:
                 tot = sum([float(v) for v in candidates.values()])
@@ -11648,7 +11573,7 @@ class Agent(object):
 
         # Forum keeps backward compatibility with older NEWS probabilities by treating
         # NEWS as a link-sharing alias.
-        elif "NEWS" in text.split():
+        elif protocol_tokens.has_token(text, protocol_tokens.NEWS):
             article, website = self.select_link(tid=tid)
             if article and website and not isinstance(article, str):
                 self.share_link(tid=tid, article=article, website=website)
@@ -11658,7 +11583,7 @@ class Agent(object):
                     self.name,
                 )
 
-        elif "SHARE_LINK" in text.split():
+        elif protocol_tokens.has_token(text, protocol_tokens.SHARE_LINK):
             article, website = self.select_link(tid=tid)
             if article and website and not isinstance(article, str):
                 self.share_link(tid=tid, article=article, website=website)
@@ -11668,7 +11593,7 @@ class Agent(object):
                     self.name,
                 )
 
-        elif "SHARE_IMAGE" in text.split():
+        elif protocol_tokens.has_token(text, protocol_tokens.SHARE_IMAGE):
             image_post = self.select_standalone_image(tid=tid)
             if image_post:
                 self.share_image(tid=tid, image_post=image_post)
@@ -11678,13 +11603,13 @@ class Agent(object):
                     self.name,
                 )
 
-        elif "SHARE" in text.split():
+        elif protocol_tokens.has_token(text, protocol_tokens.SHARE):
             logging.info(
                 "Agent %s: LLM selected SHARE, but share is disabled; skipping.",
                 self.name,
             )
 
-        elif "CAST" in text.split():
+        elif protocol_tokens.has_token(text, protocol_tokens.CAST):
             candidates = json.loads(self.read())
             try:
                 selected_post = random.sample(candidates, min(1, len(candidates)))
@@ -11692,7 +11617,7 @@ class Agent(object):
             except:
                 pass
 
-        elif "IMAGE" in text.split():
+        elif protocol_tokens.has_token(text, protocol_tokens.IMAGE):
             image, article_id = self.select_image(tid=tid)
             if image is not None:
                 self.comment_image(image, tid=tid, article_id=article_id)
@@ -11832,7 +11757,7 @@ class Agent(object):
         if not cooldown_ok:
             reply_block_reasons.append("cooldown active for this user")
         if not depth_ok:
-            reply_block_reasons.append("max reply chain depth reached for this thread+user")
+            reply_block_reasons.append(prompt_store.get("base_agent__reply__1"))
         if not abs_depth_ok:
             reply_block_reasons.append("absolute reply depth limit reached")
         if not thread_cap_ok:
@@ -11980,23 +11905,12 @@ class Agent(object):
             prompt = self.prompts.get("handler_mention_action_decision")
             if not prompt:
                 prompt = (
-                    "You have a Reddit notification: someone mentioned you (or replied to you).\n\n"
-                    "Decide how to respond based on the content, your persona, and your interests.\n"
-                    "General guidance: if you agree but have nothing to add: upvote; if you strongly disagree or think it's misinformation: downvote; if you don't care: ignore.\n"
-                    "Output ONLY the number of your chosen action.\n\n"
-                    "MENTION AUTHOR: {mention_author}\n"
-                    "MENTION TEXT:\n{mention_text}\n\n"
-                    "THREAD CONTEXT:\n{thread_context}\n\n"
-                    "YOUR INTERESTS: {interests_str}\n"
-                    "REPLY ALLOWED: {reply_allowed}\n"
-                    "REPLY BLOCK REASONS: {reply_block_reasons}\n\n"
-                    "ACTIONS:\n{options}\n\n"
-                    "Remember: output ONLY a single number."
+                    prompt_store.get("base_agent__reply__2")
                 )
 
             options = []
             if reply_allowed:
-                options.append(("reply", "Reply with a comment addressing the mention author."))
+                options.append(("reply", prompt_store.get("base_agent__reply__3")))
             options.extend(
                 [
                     ("upvote", "Upvote the mention comment."),
@@ -12040,7 +11954,7 @@ class Agent(object):
                 system_message=self.__effify(
                     self.prompts.get(
                         "handler_instructions_simple",
-                        "You are the Handler that specifies the actions to be taken.",
+                        prompt_store.get("base_agent__memory_plan_reply_strategy__1"),
                     )
                 ),
                 max_consecutive_auto_reply=0,

@@ -11,7 +11,7 @@ The repository expects:
 
 ## Install dependencies
 
-Runtime dependencies are listed in [`requirements_client.txt`](/Users/rossetti/PycharmProjects/YClientReddit/requirements_client.txt).
+Runtime dependencies are listed in [`requirements_client.txt`](../requirements_client.txt).
 
 ```bash
 python -m venv .venv
@@ -28,14 +28,14 @@ python -m pip install -r requirements_docs.txt
 
 ## Important local files
 
-- Main config: [`config_files/config.json`](/Users/rossetti/PycharmProjects/YClientReddit/config_files/config.json)
-- Prompt catalog: [`config_files/prompts.json`](/Users/rossetti/PycharmProjects/YClientReddit/config_files/prompts.json)
-- Default RSS feed list: [`config_files/rss_feeds.json`](/Users/rossetti/PycharmProjects/YClientReddit/config_files/rss_feeds.json)
-- Small feed file for lighter runs: [`config_files/feed_small.json`](/Users/rossetti/PycharmProjects/YClientReddit/config_files/feed_small.json)
+- Main config: [`config_files/config.json`](../config_files/config.json)
+- Prompt catalog: [`config_files/prompts.json`](../config_files/prompts.json)
+- Default RSS feed list: [`config_files/rss_feeds.json`](../config_files/rss_feeds.json)
+- Small feed file for lighter runs: [`config_files/feed_small.json`](../config_files/feed_small.json)
 
 ## Main entrypoint
 
-The standard CLI entrypoint is [`y_client.py`](/Users/rossetti/PycharmProjects/YClientReddit/y_client.py).
+The standard CLI entrypoint is [`y_client.py`](../y_client.py).
 
 Basic invocation:
 

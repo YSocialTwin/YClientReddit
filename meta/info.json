@@ -2,9 +2,10 @@
   "plugin_name": "YClientReddit",
   "category": "Simulation Runtime Stack",
   "group": "Forum",
-  "description": "Client-side forum simulation runtime for Reddit-like YSocial scenarios.",
+  "description": "Runs the agents of a forum simulation (client side).",
   "authors": [
     "YSocialTwin"
   ],
-  "repository_url": "https://github.com/YSocialTwin/YClientReddit"
+  "repository_url": "https://github.com/YSocialTwin/YClientReddit",
+  "license": "GPL-3.0-only"
 }

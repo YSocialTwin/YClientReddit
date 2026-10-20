@@ -2,7 +2,7 @@
 
 ## Overview
 
-The repository contains two main client implementations under [`y_client/clients/`](/Users/rossetti/PycharmProjects/YClientReddit/y_client/clients):
+The repository contains two main client implementations under [`y_client/clients/`](../y_client/clients):
 
 - `YClientBase`
 - `YClientWeb`
@@ -13,7 +13,7 @@ Both clients coordinate the simulation, but they differ in how they load configu
 
 File:
 
-- [`y_client/clients/client_base.py`](/Users/rossetti/PycharmProjects/YClientReddit/y_client/clients/client_base.py)
+- [`y_client/clients/client_base.py`](../y_client/clients/client_base.py)
 
 ### Constructor shape
 
@@ -46,7 +46,7 @@ Use `YClientBase` when you want a file-driven local run using the standard CLI e
 
 File:
 
-- [`y_client/clients/client_web.py`](/Users/rossetti/PycharmProjects/YClientReddit/y_client/clients/client_web.py)
+- [`y_client/clients/client_web.py`](../y_client/clients/client_web.py)
 
 ### Constructor shape
 

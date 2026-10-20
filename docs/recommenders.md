@@ -2,13 +2,13 @@
 
 ## Overview
 
-Recommendation logic is defined in [`y_client/recsys/`](/Users/rossetti/PycharmProjects/YClientReddit/y_client/recsys). These classes are thin strategy wrappers that encode request parameters and delegate actual ranking or suggestion work to the API server.
+Recommendation logic is defined in [`y_client/recsys/`](../y_client/recsys). These classes are thin strategy wrappers that encode request parameters and delegate actual ranking or suggestion work to the API server.
 
 ## Content recommenders
 
 Defined in:
 
-- [`y_client/recsys/ContentRecSys.py`](/Users/rossetti/PycharmProjects/YClientReddit/y_client/recsys/ContentRecSys.py)
+- [`y_client/recsys/ContentRecSys.py`](../y_client/recsys/ContentRecSys.py)
 
 Available strategies include:
 
@@ -30,7 +30,7 @@ Available strategies include:
 
 Defined in:
 
-- [`y_client/recsys/FollowRecSys.py`](/Users/rossetti/PycharmProjects/YClientReddit/y_client/recsys/FollowRecSys.py)
+- [`y_client/recsys/FollowRecSys.py`](../y_client/recsys/FollowRecSys.py)
 
 Available strategies include:
 

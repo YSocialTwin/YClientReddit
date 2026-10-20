@@ -25,7 +25,7 @@ Yes, it is possible.
 
 It is also a **meaningful refactor**, not a light cleanup.
 
-The current memory system is deeply embedded in [`y_client/classes/base_agent.py`](/Users/rossetti/PycharmProjects/YClientReddit/y_client/classes/base_agent.py). There are hundreds of `_memory_*` references and the logic is entangled with:
+The current memory system is deeply embedded in [`y_client/classes/base_agent.py`](../y_client/classes/base_agent.py). There are hundreds of `_memory_*` references and the logic is entangled with:
 
 - reply generation
 - thread browsing

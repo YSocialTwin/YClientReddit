@@ -15,6 +15,7 @@ session = None
 engine = None
 base = None
 
+from y_client import prompt_store
 from y_client.classes.base_agent import Agent, Agents
 from y_client.classes.fake_base_agent import FakeAgent
 from y_client.classes.time import SimulationSlot
@@ -67,6 +68,7 @@ class YClientWeb(object):
         self.first_run = first_run
         self.llm = llm
         self.base_path = data_base_path
+        prompt_store.use_language_from_folder(data_base_path)
         self.log_file = resolved_log_file
         self.config = config_file
 
@@ -180,7 +182,7 @@ class YClientWeb(object):
             Path(__file__).resolve().parents[2] / "config_files" / "prompts.json",
             # YSocial forum defaults used when creating new forum clients.
             # These should override package-local defaults for forum mode.
-            Path(__file__).resolve().parents[4] / "data_schema" / "prompts_forum.json",
+            Path(__file__).resolve().parents[4] / "data_schema" / "prompts" / "en" / "prompts_forum.json",
         ]
 
         for candidate in candidate_defaults:

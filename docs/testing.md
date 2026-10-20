@@ -2,15 +2,15 @@
 
 ## Test suite location
 
-Tests are under [`tests/`](/Users/rossetti/PycharmProjects/YClientReddit/tests).
+Tests are under [`tests/`](../tests).
 
 Current focused test files include:
 
-- [`tests/test_forum_memory_prompt_mode.py`](/Users/rossetti/PycharmProjects/YClientReddit/tests/test_forum_memory_prompt_mode.py)
-- [`tests/test_high_affect_memory_callback.py`](/Users/rossetti/PycharmProjects/YClientReddit/tests/test_high_affect_memory_callback.py)
-- [`tests/test_forum_reply_quality.py`](/Users/rossetti/PycharmProjects/YClientReddit/tests/test_forum_reply_quality.py)
-- [`tests/test_length_enforcement.py`](/Users/rossetti/PycharmProjects/YClientReddit/tests/test_length_enforcement.py)
-- [`tests/test_opinion_dynamics.py`](/Users/rossetti/PycharmProjects/YClientReddit/tests/test_opinion_dynamics.py)
+- [`tests/test_forum_memory_prompt_mode.py`](../tests/test_forum_memory_prompt_mode.py)
+- [`tests/test_high_affect_memory_callback.py`](../tests/test_high_affect_memory_callback.py)
+- [`tests/test_forum_reply_quality.py`](../tests/test_forum_reply_quality.py)
+- [`tests/test_length_enforcement.py`](../tests/test_length_enforcement.py)
+- [`tests/test_opinion_dynamics.py`](../tests/test_opinion_dynamics.py)
 
 ## What the tests emphasize
 
