@@ -292,7 +292,7 @@ class YClientBase(object):
 
             if admin_db_path:
                 admin_engine = db.create_engine(
-                    f"sqlite:////{admin_db_path}",
+                    f"sqlite:///{os.path.abspath(admin_db_path)}",
                     connect_args={"check_same_thread": False},
                 )
                 admin_session = orm.scoped_session(orm.sessionmaker())(bind=admin_engine)

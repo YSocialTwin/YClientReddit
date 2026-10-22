@@ -198,7 +198,7 @@ def initialize_client_db(*, db_path=None, database_url=None):
     elif db_path:
         _ensure_sqlite_seed_db(db_path)
         engine = db.create_engine(
-            f"sqlite:////{os.path.abspath(db_path)}",
+            f"sqlite:///{os.path.abspath(db_path)}",
             connect_args={"check_same_thread": False, "timeout": 30},
         )
     else:
