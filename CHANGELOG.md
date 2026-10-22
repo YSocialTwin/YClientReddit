@@ -4,6 +4,12 @@ All notable changes to this project are documented here. The format follows [Kee
 
 ## [Unreleased]
 
+## [2.1.1] - 2026-10-22
+
+### Fixed
+- SQLite URIs on Windows: `sqlite:///` plus the absolute path (the previous `sqlite:////` form produced "unable to open database file").
+- `SyntaxWarning` for the unescaped regex in the feed reader (raw string).
+
 ## [2.1.0] - 2026-10-20
 
 ### Added
@@ -23,5 +29,6 @@ All notable changes to this project are documented here. The format follows [Kee
 - License: GPL-3.0-only, declared in `LICENSE`, `meta/info.json` and the README.
 - README restructured on the common layout; citation updated to the published YSocial reference (Big Data & Society, 2026).
 
-[Unreleased]: https://github.com/YSocialTwin/YClientReddit/compare/v2.1.0...HEAD
+[Unreleased]: https://github.com/YSocialTwin/YClientReddit/compare/v2.1.1...HEAD
+[2.1.1]: https://github.com/YSocialTwin/YClientReddit/compare/v2.1.0...v2.1.1
 [2.1.0]: https://github.com/YSocialTwin/YClientReddit/releases/tag/v2.1.0
