@@ -4,6 +4,17 @@ All notable changes to this project are documented here. The format follows [Kee
 
 ## [Unreleased]
 
+### Added
+- Content recommenders `ReverseChronoComments`, `CommonInterests`, `CommonUserInterests`, `SimilarUsersReactions` and `SimilarUsersPosts`, so every recommender offered by YWeb for forum clients exists in the client (before, selecting them made the agents fail to load).
+- `y_client.recsys.CONTENT_RECSYS` lists the available content recommenders; the CLI `-x` option validates against it and shows them in its help.
+- Tests for the content recommenders (`tests/test_content_recsys.py`).
+
+### Fixed
+- `ReverseChrono`, `ReverseChronoPopularity`, `ReverseChronoFollowers` and `ReverseChronoFollowersPopularity` ignored `n_posts` (the limit was fixed to 10).
+- The `articles` flag no longer stays set on the recommender after an article read.
+- Every agent gets its own copy of the recommenders (the instance was shared and its `uid` overwritten at each read).
+- `HotRanking` docstring and docs describe the actual formula; documented `MostCommented` and the available modes.
+
 ## [2.1.1] - 2026-10-22
 
 ### Fixed

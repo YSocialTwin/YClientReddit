@@ -10,6 +10,7 @@ from y_client.memory_runtime import build_agent_memory_engine
 from y_client.stress_reward.update_system import StressRewardSystem, deep_update
 import y_client.opinion_dynamics as op_dynamics
 from y_client import content_store
+import copy
 import random
 from requests import get, post
 import json
@@ -7372,8 +7373,10 @@ class Agent(object):
         :param content_recsys: the content recommendation system
         :param follow_recsys: the follow recommendation system
         """
+        # every agent gets its own copy: the recsys keeps per-user request parameters and the
+        # same instance is passed to all the agents by the experiment
         if self.content_rec_sys is None:
-            self.content_rec_sys = content_recsys
+            self.content_rec_sys = copy.deepcopy(content_recsys)
             self.content_rec_sys.add_user_id(self.user_id)
             self.content_rec_sys_name = content_recsys.name
 
@@ -7389,7 +7392,7 @@ class Agent(object):
             post(f"{api_url}", headers=headers, data=st)
 
         if self.follow_rec_sys is None:
-            self.follow_rec_sys = follow_recsys
+            self.follow_rec_sys = copy.deepcopy(follow_recsys)
             self.follow_rec_sys.add_user_id(self.user_id)
             self.follow_rec_sys_name = follow_recsys.name
 
