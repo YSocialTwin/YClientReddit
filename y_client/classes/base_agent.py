@@ -201,6 +201,12 @@ def _normalize_output_tokens(raw_value):
 
 
 class Agent(object):
+    # Defaults for the follow probabilities that only the web initialiser sets from the config:
+    # agents built through the plain client path (rule-based FakeAgent included) read them too.
+    probability_of_daily_follow = 0.0
+    probability_of_secondary_follow = 0.0
+    probability_of_follow_back = 0.0
+
     def __init__(
         self,
         name: str,
