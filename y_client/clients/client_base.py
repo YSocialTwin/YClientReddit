@@ -18,6 +18,7 @@ from y_client.recsys import *
 from y_client.utils import generate_user
 from y_client.news_feeds import Feeds
 from y_client.content_store import initialize_content_store, reset_content_db
+from y_client import federation as _federation
 
 admin_session = None
 admin_engine = None
@@ -48,6 +49,7 @@ class YClientBase(object):
 
         self.prompts = self._load_prompts_with_defaults(prompts_filename)
         self.config = json.load(open(config_filename, "r"))
+        _federation.install(self.config)  # no-op unless the "federation" section is enabled
         initialize_content_store(experiment_name=self.config["simulation"]["name"])
         self.agents_owner = owner
         self.agents_filename = agents_filename
@@ -590,7 +592,8 @@ class YClientBase(object):
                         int(len(self.agents.agents) * self.hourly_activity[str(h)]), 1
                     )
 
-                    sagents = random.sample(self.agents.agents, min(expected_active_users, len(self.agents.agents)))
+                    pool = _federation.filter_pool(self.agents.agents)  # same list unless the federation hides accounts
+                    sagents = random.sample(pool, min(expected_active_users, len(pool)))
 
                     # available actions
                     acts = [a for a, v in self.actions_likelihood.items() if v > 0]

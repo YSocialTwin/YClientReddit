@@ -1,3 +1,4 @@
+from y_client import federation
 from y_client.recsys.ContentRecSys import ContentRecSys
 from y_client.recsys.FollowRecSys import FollowRecSys
 from y_client.news_feeds.client_modals import Websites, Images, Articles, Agent_Custom_Prompt, ImagePosts
@@ -7851,7 +7852,8 @@ class Agent(object):
                 "hashtags": hashtags,
                 "mentions": mentions,
                 "tid": tid,
-                "topics": interests_id
+                "topics": interests_id,
+                **federation.post_fields(),
             }
         )
 
