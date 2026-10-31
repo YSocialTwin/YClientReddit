@@ -5,6 +5,7 @@ All notable changes to this project are documented here. The format follows [Kee
 ## [Unreleased]
 
 ### Added
+- Federation attention (opt-in): the agent's number of actions in a slot is scaled by the multiplier of the day that the server publishes (`GET /federation/attention`), rounded at random with the module's own generator; with the federation off or multiplier 1 nothing changes.
 - Federation (opt-in, `y_client/federation.py`): with the `federation` section of the client configuration enabled, agents that are not active on the platform (listed by `GET /federation/inactive_users`) are not sampled and do not act, and an agent may mark a post for cross-post (`federation.crosspost_propensity`, own seeded generator, extra `crosspost` field of `/post`). Without the section nothing changes.
 - Content recommenders `ReverseChronoComments`, `CommonInterests`, `CommonUserInterests`, `SimilarUsersReactions` and `SimilarUsersPosts`, so every recommender offered by YWeb for forum clients exists in the client (before, selecting them made the agents fail to load).
 - `y_client.recsys.CONTENT_RECSYS` lists the available content recommenders; the CLI `-x` option validates against it and shows them in its help.
