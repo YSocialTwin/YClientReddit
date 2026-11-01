@@ -70,9 +70,10 @@ class YClientBase(object):
             a.upper(): float(v)
             for a, v in self.config["simulation"]["actions_likelihood"].items()
         }
-        # Forum experiments do not allow repost/share of other users' content.
+        # Forum experiments do not allow repost/share of other users' content, unless the experiment opens it
+        # (`share.enabled` or federation with crosspost_mode = agent_action).
         if "SHARE" in self.actions_likelihood:
-            self.actions_likelihood["SHARE"] = 0.0
+            self.actions_likelihood["SHARE"] = _federation.share_likelihood(self.actions_likelihood["SHARE"])
         tot = sum(self.actions_likelihood.values())
         if tot <= 0:
             self.actions_likelihood = {"NONE": 1.0}

@@ -17,7 +17,10 @@ import re
 import requests
 
 _state = {"enabled": False, "api": None, "propensity": 0.0, "rng": None, "inactive": set(), "attention": {},
-          "mode": "coordinator_rule", "member": None}
+          "mode": "coordinator_rule", "member": None, "share": False}
+
+# Share probability used when the experiment enables the share but gives no likelihood for it.
+DEFAULT_SHARE_LIKELIHOOD = 0.05
 
 # Longest text each destination accepts (characters); the rules and the parser of an LLM reply both apply them.
 LIMITS = {"microblogging": 280, "forum": 2000, "photo_sharing": 300, "instant_messaging": 400, "dating": 200}
@@ -28,13 +31,30 @@ def install(config):
     section = (config or {}).get("federation") or {}
     enabled = bool(section.get("enabled"))
     _state.update(enabled=enabled, inactive=set(), api=None, propensity=0.0, rng=None, attention={},
-                  mode="coordinator_rule", member=None)
+                  mode="coordinator_rule", member=None, share=False)
     if enabled:
         api = str((config.get("servers") or {}).get("api", "")).rstrip("/")
         _state.update(api=api, propensity=float(section.get("crosspost_propensity", 0.0)),
                       rng=random.Random(section.get("seed", 0)),
                       mode=str(section.get("crosspost_mode") or "coordinator_rule"), member=section.get("member"))
+    # The forum share is closed unless the experiment opens it (`share.enabled: true`) or the agents decide
+    # their cross-posts themselves (federation enabled with crosspost_mode = agent_action).
+    _state["share"] = bool((config or {}).get("share", {}).get("enabled", False)) or (
+        enabled and _state["mode"] == "agent_action")
     return enabled
+
+
+def share_allowed():
+    """True when the forum share of other users' threads is open (see `install`)."""
+    return bool(_state["share"])
+
+
+def share_likelihood(configured):
+    """Likelihood of the SHARE action: 0 while the share is closed; the configured value when it is positive,
+    else DEFAULT_SHARE_LIKELIHOOD."""
+    if not _state["share"]:
+        return 0.0
+    return float(configured) if configured and float(configured) > 0 else DEFAULT_SHARE_LIKELIHOOD
 
 
 def enabled():
@@ -176,3 +196,12 @@ def post_fields(user_id=None, text=None, adapt=None):
         targets = crosspost_targets(user_id, text, adapt) if user_id is not None else []
         return {"crosspost": True, "crosspost_to": targets} if targets else {}
     return {"crosspost": True} if _state["rng"].random() < _state["propensity"] else {}
+
+
+def share_fields(user_id=None, text=None, adapt=None):
+    """Extra fields of the /share payload: the cross-post of the shared thread, only with crosspost.mode =
+    agent_action and a propensity above 0 (no draw otherwise)."""
+    if not agent_action() or _state["propensity"] <= 0.0 or user_id is None:
+        return {}
+    targets = crosspost_targets(user_id, text, adapt)
+    return {"crosspost": True, "crosspost_to": targets} if targets else {}

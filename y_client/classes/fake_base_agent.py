@@ -430,6 +430,7 @@ class FakeAgent(Agent):
                 "hashtags": None,
                 "mentions": None,
                 "tid": tid,
+                **federation.share_fields(self.user_id, post_text),
             }
         )
 

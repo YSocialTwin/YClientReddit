@@ -10728,11 +10728,12 @@ class Agent(object):
         :param tid: the round id
         :return: the response from the service
         """
-        logging.info(
-            "Agent %s: SHARE action skipped (disabled for forum experiments).",
-            self.name,
-        )
-        return
+        if not federation.share_allowed():
+            logging.info(
+                "Agent %s: SHARE action skipped (disabled for forum experiments).",
+                self.name,
+            )
+            return
 
         article = self.__get_article(post_id)
         if "status" in article:
@@ -10847,6 +10848,7 @@ class Agent(object):
                 "hashtags": hashtags,
                 "mentions": mentions,
                 "tid": tid,
+                **federation.share_fields(self.user_id, post_text, self._crosspost_adapt),
             }
         )
 
@@ -11491,7 +11493,8 @@ class Agent(object):
         :param max_length_thread_reading: The maximum length of the thread to read.
         """
         # Forum experiments do not allow repost/share of other users' content.
-        actions = [a for a in actions if str(a).upper() != "SHARE"]
+        if not federation.share_allowed():
+            actions = [a for a in actions if str(a).upper() != "SHARE"]
         if not actions:
             actions = ["NONE"]
 
@@ -11639,10 +11642,16 @@ class Agent(object):
                 )
 
         elif protocol_tokens.has_token(text, protocol_tokens.SHARE):
-            logging.info(
-                "Agent %s: LLM selected SHARE, but share is disabled; skipping.",
-                self.name,
-            )
+            if not federation.share_allowed():
+                logging.info(
+                    "Agent %s: LLM selected SHARE, but share is disabled; skipping.",
+                    self.name,
+                )
+            else:
+                candidates = json.loads(self.read(article=True))
+                if len(candidates) > 0:
+                    selected_post = random.sample(candidates, 1)
+                    self.share(int(selected_post[0]), tid=tid)
 
         elif protocol_tokens.has_token(text, protocol_tokens.CAST):
             candidates = json.loads(self.read())

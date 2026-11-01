@@ -50,7 +50,7 @@ Key fields:
 
 ### `actions_likelihood`
 
-This governs the action mix the agents choose from. In forum mode, `SHARE` is normalized to `0.0` inside the clients.
+This governs the action mix the agents choose from. In forum mode, `SHARE` is normalized to `0.0` inside the clients unless the share is opened: with `"share": {"enabled": true}` in the client configuration, or with the federation enabled and `federation.crosspost_mode: agent_action`. When opened, the configured `share` likelihood is used (a missing or zero value becomes the default `0.05`). The agent shares a thread that carries a news article; with `agent_action` the share is also sent to the platforms the agent chooses (`crosspost_to`), and the shared text travels with the attribution of the original author.
 
 Current example keys:
 

@@ -104,3 +104,46 @@ def test_the_five_prompts_exist_in_both_languages_and_render():
             text = prompt_store.prompt(federation.adapt_prompt_key(dest), language=lang, source_platform="forum", text="SAMPLE")
             assert "SAMPLE" in text and "forum" in text and "{" not in text
     assert federation.adapt_prompt_key("unknown") is None
+
+
+def _share_cfg(share=None, federation_section=None, share_likelihood=0.0):
+    cfg = {"servers": {"api": "http://srv/"}}
+    if share is not None:
+        cfg["share"] = {"enabled": share}
+    if federation_section:
+        cfg["federation"] = federation_section
+    return cfg
+
+
+def test_the_forum_share_is_closed_by_default_and_opens_only_by_option_or_agent_action():
+    federation.install({})
+    assert not federation.share_allowed() and federation.share_likelihood(0.4) == 0.0
+    federation.install(_share_cfg(share=False))
+    assert not federation.share_allowed()
+    federation.install(_share_cfg(federation_section=dict(enabled=True, member="forum", crosspost_mode="coordinator_rule")))
+    assert not federation.share_allowed()  # federation alone does not open it
+    federation.install(_share_cfg(share=True))
+    assert federation.share_allowed()
+    federation.install(_share_cfg(federation_section=dict(enabled=True, member="forum", crosspost_mode="agent_action")))
+    assert federation.share_allowed()
+    federation.install({})
+
+
+def test_share_likelihood_keeps_the_configured_value_or_the_documented_default():
+    federation.install(_share_cfg(share=True))
+    assert federation.share_likelihood(0.3) == 0.3
+    assert federation.share_likelihood(0.0) == federation.DEFAULT_SHARE_LIKELIHOOD == 0.05
+    assert federation.share_likelihood(None) == 0.05
+    federation.install({})
+
+
+def test_share_fields_only_in_agent_action_and_no_draw_otherwise(monkeypatch):
+    federation.install({})
+    state = random.getstate()
+    assert federation.share_fields(1, "text", lambda d, t: "x") == {} and random.getstate() == state
+    _on(monkeypatch, ["dating"], mode="coordinator_rule")
+    assert federation.share_fields(1, "text") == {}
+    _on(monkeypatch, ["dating"])
+    fields = federation.share_fields(1, "A shared thread worth a look.", None)
+    assert fields["crosspost"] is True and [t["member"] for t in fields["crosspost_to"]] == ["dating"]
+    federation.install({})

@@ -16,6 +16,7 @@ engine = None
 base = None
 
 from y_client import prompt_store
+from y_client import federation as _federation
 from y_client.classes.base_agent import Agent, Agents
 from y_client.classes.fake_base_agent import FakeAgent
 from y_client.classes.time import SimulationSlot
@@ -91,9 +92,11 @@ class YClientWeb(object):
             a.upper(): float(v)
             for a, v in self.config["simulation"]["actions_likelihood"].items()
         }
-        # Forum experiments do not allow repost/share of other users' content.
+        _federation.install(self.config)  # only reads the share/federation options here
+        # Forum experiments do not allow repost/share of other users' content, unless the experiment opens it
+        # (`share.enabled` or federation with crosspost_mode = agent_action).
         if "SHARE" in self.actions_likelihood:
-            self.actions_likelihood["SHARE"] = 0.0
+            self.actions_likelihood["SHARE"] = _federation.share_likelihood(self.actions_likelihood["SHARE"])
         tot = sum(self.actions_likelihood.values())
         if tot <= 0:
             self.actions_likelihood = {"NONE": 1.0}
