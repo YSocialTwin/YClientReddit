@@ -26,19 +26,26 @@ DEFAULT_SHARE_LIKELIHOOD = 0.05
 LIMITS = {"microblogging": 280, "forum": 2000, "photo_sharing": 300, "instant_messaging": 400, "dating": 200}
 
 
+def _share_blocked(content):
+    """crosspost.content (additive, OR): the share of the content of others can be eligible with `all` (or no setting) and
+    with `news` or `images` selected; with only `own_content` (alias `own_posts`) it never can."""
+    names = {str(c) for c in (content or ())}
+    return bool(names) and "all" not in names and not (names & {"news", "images"})
+
+
 def install(config):
     """Read config["federation"]; call once when the client starts."""
     section = (config or {}).get("federation") or {}
     enabled = bool(section.get("enabled"))
     _state.update(enabled=enabled, inactive=set(), api=None, propensity=0.0, rng=None, attention={},
-                  mode="coordinator_rule", member=None, share=False, adopt=False, own_content_only=False)
+                  mode="coordinator_rule", member=None, share=False, adopt=False, share_blocked=False)
     if enabled:
         api = str((config.get("servers") or {}).get("api", "")).rstrip("/")
         _state.update(api=api, propensity=float(section.get("crosspost_propensity", 0.0)),
                       rng=random.Random(section.get("seed", 0)),
                       mode=str(section.get("crosspost_mode") or "coordinator_rule"), member=section.get("member"),
                       adopt=bool(section.get("adopt")),
-                      own_content_only=bool({"own_content", "own_posts"} & set(section.get("crosspost_content") or ())))  # own_posts: legacy name
+                      share_blocked=_share_blocked(section.get("crosspost_content")))
     # The forum share is closed unless the experiment opens it (`share.enabled: true`) or the agents decide
     # their cross-posts themselves (federation enabled with crosspost_mode = agent_action).
     _state["share"] = bool((config or {}).get("share", {}).get("enabled", False)) or (
@@ -231,7 +238,7 @@ def share_fields(user_id=None, text=None, adapt=None):
     agent_action and a propensity above 0 (no draw otherwise)."""
     if not agent_action() or _state["propensity"] <= 0.0 or user_id is None:
         return {}
-    if _state["own_content_only"]:  # crosspost.content includes own_content: a share is never eligible, the agent is not offered it
+    if _state["share_blocked"]:  # crosspost.content selects only own_content: a share can never be eligible, do not offer it
         return {}
     targets = crosspost_targets(user_id, text, adapt)
     return {"crosspost": True, "crosspost_to": targets} if targets else {}
