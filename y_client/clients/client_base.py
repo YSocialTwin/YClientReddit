@@ -475,8 +475,12 @@ class YClientBase(object):
             if getattr(ag, "user_id", None) == uid:
                 return ag
         try:
-            agent = Agent(name=account["username"], email=f"{account['username']}@federation.local", load=True,
-                          config=self.config)
+            from y_client.classes.fake_base_agent import FakeAgent
+            from y_client.utils import _rule_based_agents_enabled
+
+            # the class every other agent of the experiment has (generate_user): a rule-based experiment has no model
+            agent = (FakeAgent if _rule_based_agents_enabled(self.config) else Agent)(
+                name=account["username"], email=f"{account['username']}@federation.local", load=True, config=self.config)
             if getattr(agent, "user_id", None) is None:
                 return None
             agent.set_prompts(self.prompts)

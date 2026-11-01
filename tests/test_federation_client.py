@@ -132,3 +132,41 @@ def test_the_client_loads_the_adopted_account_by_name_without_registering_it(mon
     assert agent.user_id == 7 and added == [agent] and agent.simulation_client is client
     assert loaded == [{"name": "newcomer", "email": "newcomer@federation.local", "load": True, "config": client.config}]  # load, never register
     assert client.adopt_federated_account(account) is agent and len(loaded) == 1  # already an agent here: nothing is built again
+
+
+def test_adopted_account_gets_the_agent_class_of_the_experiment(monkeypatch):
+    """INV-19: a rule-based experiment (no model) adopts a provisioned account as a FakeAgent, like generate_user would."""
+    from y_client.classes import base_agent as base_module
+    from y_client.classes import fake_base_agent as fake_module
+    from y_client.clients.client_base import YClientBase
+
+    class _Built:
+        def __init__(self, **kw):
+            self.kind, self.name, self.user_id = type(self).__name__, kw["name"], 9
+
+        def set_prompts(self, prompts):
+            pass
+
+        def set_rec_sys(self, *a):
+            pass
+
+    class Real(_Built):
+        pass
+
+    class Fake(_Built):
+        pass
+
+    import y_client.classes as classes
+
+    monkeypatch.setattr(classes, "Agent", Real, raising=False)
+    monkeypatch.setattr(classes, "FakeAgent", Fake, raising=False)
+    monkeypatch.setattr(base_module, "Agent", Real)
+    monkeypatch.setattr(fake_module, "FakeAgent", Fake)
+    monkeypatch.setattr("y_client.clients.client_base.Agent", Real, raising=False)
+    for llm_agents, expected in (([None], "Fake"), (["llama3"], "Real")):
+        client = YClientBase.__new__(YClientBase)
+        client.config = {"agents": {"llm_agents": llm_agents}}
+        client.agents = base_module.Agents()
+        client.prompts, client.content_recsys, client.follow_recsys, client.agents_owner = {}, None, None, "admin"
+        agent = client.adopt_federated_account({"user_id": 9, "username": "newcomer", "interests": []})
+        assert agent is not None and agent.kind == expected
