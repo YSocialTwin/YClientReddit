@@ -686,6 +686,30 @@ class Agent(object):
         except Exception:
             return {}
 
+    def _crosspost_adapt(self, dest, text):
+        """The agent's own version of its post for the destination platform (cross-post as an agent action, F6.2).
+
+        None when it cannot be done (no usable model, no prompt for that platform, an error or an empty reply): the
+        caller then uses the rule text."""
+        key = federation.adapt_prompt_key(dest)
+        configs = (getattr(self, "llm_config", None) or {}).get("config_list") or []
+        model = str((configs[0] or {}).get("model") or "").strip().lower() if configs else ""
+        if key is None or model in ("", "none", "null"):
+            return None
+        try:
+            adapter = AssistantAgent(
+                name="CrosspostAdapter",
+                llm_config=self.llm_config,
+                system_message=(getattr(self, "prompts", {}) or {}).get("handler_instructions_simple", ""),
+                max_consecutive_auto_reply=1,
+            )
+            reply = adapter._generate_reply(
+                prompt_store.prompt(key, source_platform=federation.source_platform(), text=text)
+            )
+        except Exception:  # noqa: BLE001 - a failing model must not stop the post
+            return None
+        return federation.parse_reply(dest, reply)
+
     def _annotate_stress_reward_text(self, prompt_key, text, *, target_user_id=None):
         if not getattr(self, "stress_reward_enabled", False):
             return {}
@@ -7853,7 +7877,7 @@ class Agent(object):
                 "mentions": mentions,
                 "tid": tid,
                 "topics": interests_id,
-                **federation.post_fields(),
+                **federation.post_fields(self.user_id, post_text, self._crosspost_adapt),
             }
         )
 
