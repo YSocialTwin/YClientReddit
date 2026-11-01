@@ -466,6 +466,28 @@ class YClientBase(object):
             self.agents.add_agent(agent)
             self.assign_agent_interests(agent)
 
+    def adopt_federated_account(self, account):
+        """Give an agent to an account the server created for the federation (INV-19): the agent is loaded from the server
+        by its name, like a resumed one, so nothing is registered twice (its interests were stored by the server). Returns
+        the agent, or None when it cannot be built."""
+        uid = int(account["user_id"])
+        for ag in self.agents.agents:
+            if getattr(ag, "user_id", None) == uid:
+                return ag
+        try:
+            agent = Agent(name=account["username"], email=f"{account['username']}@federation.local", load=True,
+                          config=self.config)
+            if getattr(agent, "user_id", None) is None:
+                return None
+            agent.set_prompts(self.prompts)
+            agent.set_rec_sys(self.content_recsys, self.follow_recsys)
+        except Exception as exc:  # noqa: BLE001 - the account stays unadopted and is offered again
+            print(f"federation: could not adopt {account.get('username')}: {exc}")
+            return None
+        agent.simulation_client = self
+        self.agents.add_agent(agent)
+        return agent
+
     def process_reciprocal_follow_event(
         self, *, actor_agent, target_user_id: int, action: str, tid: int
     ) -> bool:
@@ -593,6 +615,7 @@ class YClientBase(object):
                         int(len(self.agents.agents) * self.hourly_activity[str(h)]), 1
                     )
 
+                    _federation.adopt_provisioned(self)  # agents for the accounts the federation created here (INV-19)
                     pool = _federation.filter_pool(self.agents.agents)  # same list unless the federation hides accounts
                     sagents = random.sample(pool, min(expected_active_users, len(pool)))
 
