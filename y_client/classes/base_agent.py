@@ -710,6 +710,43 @@ class Agent(object):
             return None
         return federation.parse_reply(dest, reply)
 
+    def _crosspost_decider(self):
+        """The function that asks this agent's model whether to cross-post (crosspost.decision = llm), or None for an
+        agent without a usable model (it keeps the Bernoulli draw)."""
+        return self._crosspost_decide if self._crosspost_has_model() else None
+
+    def _crosspost_decide(self, trigger, text, dest_lines, context=None):
+        """The raw reply of the agent's model to the prompt `crosspost_decide` (the answer is a JSON object that
+        `federation.parse_decision` reads). `trigger` is `publish` or `interaction`; for an interaction `context` is
+        {"action": "share"|"comment"|"reply"|"reaction", "content": text of the content of the other agent}.
+        One model call; errors propagate (the caller falls back to the draw)."""
+        me = prompt_store.localize(self)
+        facts = [getattr(me, a, None) for a in ("age", "gender", "nationality", "profession", "leaning", "education_level")]
+        interests = [str(i) for i in (getattr(me, "interests", None) or [])][:6]
+        profile = ", ".join(str(f) for f in facts if f not in (None, "")) + (f"; {', '.join(interests)}" if interests else "")
+        context = context or {}
+        if trigger == "interaction":
+            action = prompt_store.get("crosspost_decide_action_" + str(context.get("action") or "share"))
+            phrase = prompt_store.prompt("crosspost_decide_interaction", action=action)
+            text = context.get("content") or text
+        else:
+            phrase = prompt_store.get("crosspost_decide_publish")
+        decider = AssistantAgent(
+            name="CrosspostDecider",
+            llm_config=self.llm_config,
+            system_message=(getattr(self, "prompts", {}) or {}).get("handler_instructions_simple", ""),
+            max_consecutive_auto_reply=1,
+        )
+        return decider._generate_reply(
+            prompt_store.prompt("crosspost_decide", name=self.name, profile=profile, trigger=phrase, text=text,
+                                destinations=dest_lines)
+        )
+
+    def _crosspost_has_model(self):
+        configs = (getattr(self, "llm_config", None) or {}).get("config_list") or []
+        model = str((configs[0] or {}).get("model") or "").strip().lower() if configs else ""
+        return model not in ("", "none", "null")
+
     def _annotate_stress_reward_text(self, prompt_key, text, *, target_user_id=None):
         if not getattr(self, "stress_reward_enabled", False):
             return {}
@@ -7877,7 +7914,7 @@ class Agent(object):
                 "mentions": mentions,
                 "tid": tid,
                 "topics": interests_id,
-                **federation.post_fields(self.user_id, post_text, self._crosspost_adapt),
+                **federation.post_fields(self.user_id, post_text, self._crosspost_adapt, self._crosspost_decider(), tid),
             }
         )
 
@@ -10848,7 +10885,8 @@ class Agent(object):
                 "hashtags": hashtags,
                 "mentions": mentions,
                 "tid": tid,
-                **federation.share_fields(self.user_id, post_text, self._crosspost_adapt),
+                **federation.share_fields(self.user_id, post_text, self._crosspost_adapt, self._crosspost_decider(), tid,
+                                         {"action": "share", "content": f"{article_title}\n{article_summary}".strip()}),
             }
         )
 
