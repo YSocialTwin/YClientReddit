@@ -669,6 +669,35 @@ class YClientWeb(object):
 
             self.agents.remove_agent_by_ids(data)
 
+    def adopt_federated_account(self, account):
+        """Give an agent to an account the server created for the federation (INV-19): the agent is loaded from the server
+        by its name, like a resumed one, so nothing is registered twice (its interests were stored by the server). Returns
+        the agent, or None when it cannot be built. Called by `federation.adopt_provisioned` (only with `federation.adopt`)."""
+        uid = int(account["user_id"])
+        for ag in self.agents.agents:
+            if getattr(ag, "user_id", None) == uid:
+                return ag
+        try:
+            import y_client.recsys as recsys
+
+            # the class every other agent of the experiment has: a rule-based experiment has no model. YClientWeb keeps
+            # no shared recommender (each agent of the file has its own): the defaults are used for an account the
+            # server created.
+            agent = (FakeAgent if self._rule_based_agents_enabled() else Agent)(
+                name=account["username"], email=f"{account['username']}@federation.local", load=True, config=self.config,
+                recsys=recsys.ReverseChronoPopularity(), frecsys=recsys.Jaccard(leaning_bias=1.5))
+            if getattr(agent, "user_id", None) is None:
+                return None
+            if getattr(agent, "activity_profile", None) is None:
+                agent.activity_profile = "Always On"
+            agent.set_prompts(self.prompts)
+        except Exception as exc:  # noqa: BLE001 - the account stays unadopted and is offered again
+            print(f"federation: could not adopt {account.get('username')}: {exc}")
+            return None
+        agent.simulation_client = self
+        self.agents.add_agent(agent)
+        return agent
+
     def add_agent(self, agent=None, username_type=None):
         """
         Add an agent to the simulation
