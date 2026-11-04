@@ -481,13 +481,20 @@ class YClientWeb(object):
         self.agents_filename = str(chosen_population)
         data = json.load(open(self.agents_filename, "r"))
         self._coerce_legacy_rule_based_config(data.get("agents", []))
+        fallback_rec = self._majority_recsys(
+            (a.get("rec_sys"), a.get("frec_sys")) for a in data["agents"] if a.get("is_page", 0) != 1
+        )
         skipped_pages = 0
         for ag in data["agents"]:
             is_page = ag.get("is_page", 0)
             if is_page != 1:
                 AgentClass = self._agent_class_for_payload(ag)
-                content_recsys = getattr(recsys, ag["rec_sys"])()
-                follow_recsys = getattr(frecsys, ag["frec_sys"])(leaning_bias=1.5)
+                # an account the server created for the federation may be saved with the name "default": it gets the
+                # recommenders most used in the file
+                content_name = ag["rec_sys"] if isinstance(getattr(recsys, str(ag["rec_sys"]), None), type) else fallback_rec[0]
+                follow_name = ag["frec_sys"] if isinstance(getattr(frecsys, str(ag["frec_sys"]), None), type) else fallback_rec[1]
+                content_recsys = getattr(recsys, content_name)()
+                follow_recsys = getattr(frecsys, follow_name)(leaning_bias=1.5)
                 agent = AgentClass(
                     name=ag["name"],
                     email=ag["email"],
@@ -530,6 +537,12 @@ class YClientWeb(object):
                 "Skipped %s legacy page agent definitions; standard agents now handle link sharing.",
                 skipped_pages,
             )
+
+        if not self.first_run:
+            # a restart: the accounts the server created for the federation are not in the population file
+            from y_client import federation
+
+            federation.adopt_provisioned(self, include_adopted=True)
 
     def add_feeds(self):
         """
@@ -669,6 +682,21 @@ class YClientWeb(object):
 
             self.agents.remove_agent_by_ids(data)
 
+    def _majority_recsys(self, pairs):
+        """Names of the content and follow recommenders most used by `pairs` ((rec_sys, frec_sys) of the agents of this
+        platform); the placeholder "default" and unknown names do not count. The pages' defaults when nobody has a valid one.
+        An account the server created for the federation takes these, so it behaves like most of the agents around it."""
+        from collections import Counter
+
+        import y_client.recsys as recsys
+
+        pairs = list(pairs)
+        out = []
+        for i, fallback in enumerate(("ReverseChronoPopularity", "Jaccard")):
+            counts = Counter(p[i] for p in pairs if isinstance(getattr(recsys, str(p[i]), None), type))
+            out.append(sorted(counts.items(), key=lambda kv: (-kv[1], kv[0]))[0][0] if counts else fallback)
+        return tuple(out)
+
     def adopt_federated_account(self, account):
         """Give an agent to an account the server created for the federation (INV-19): the agent is loaded from the server
         by its name, like a resumed one, so nothing is registered twice (its interests were stored by the server). Returns
@@ -681,13 +709,19 @@ class YClientWeb(object):
             import y_client.recsys as recsys
 
             # the class every other agent of the experiment has: a rule-based experiment has no model. YClientWeb keeps
-            # no shared recommender (each agent of the file has its own): the defaults are used for an account the
-            # server created.
+            # no shared recommender (each agent of the file has its own): the account gets the ones most used by the
+            # agents of this platform.
+            content_name, follow_name = self._majority_recsys(
+                (getattr(ag, "content_rec_sys_name", None), getattr(ag, "follow_rec_sys_name", None))
+                for ag in self.agents.agents
+            )
             agent = (FakeAgent if self._rule_based_agents_enabled() else Agent)(
                 name=account["username"], email=f"{account['username']}@federation.local", load=True, config=self.config,
-                recsys=recsys.ReverseChronoPopularity(), frecsys=recsys.Jaccard(leaning_bias=1.5))
+                recsys=getattr(recsys, content_name)(), frecsys=getattr(recsys, follow_name)(leaning_bias=1.5))
             if getattr(agent, "user_id", None) is None:
                 return None
+            # the server stores "default" for these accounts: save the names of the recommenders actually used
+            agent.content_rec_sys_name, agent.follow_rec_sys_name = content_name, follow_name
             if getattr(agent, "activity_profile", None) is None:
                 agent.activity_profile = "Always On"
             agent.set_prompts(self.prompts)

@@ -98,3 +98,62 @@ def test_yclientweb_adopts_the_provisioned_accounts_as_agents_of_the_experiment(
     assert len(client.agents.agents) == 1
     client.config["agents"]["llm_agents"] = [None]  # rule-based experiment: no model
     assert client.adopt_federated_account({"user_id": 10, "username": "other"}).kind == "Fake"
+
+
+def test_an_adopted_account_gets_the_recommenders_of_the_majority_of_the_agents(make_client, monkeypatch):
+    import y_client.clients.client_web as module
+
+    class Real:
+        def __init__(self, **kw):
+            self.kw, self.name, self.user_id, self.activity_profile = kw, kw["name"], 9, None
+
+        def set_prompts(self, prompts):
+            pass
+
+    monkeypatch.setattr(module, "Agent", Real)
+    client = make_client({"enabled": True, "adopt": True})
+    for i, (rec, frec) in enumerate([("CommonInterests", "Jaccard"), ("ReverseChronoComments", "FollowRecSys"),
+                                     ("ReverseChronoComments", "FollowRecSys"), ("default", "default")]):
+        client.agents.agents.append(SimpleNamespace(user_id=100 + i, content_rec_sys_name=rec, follow_rec_sys_name=frec))
+    agent = client.adopt_federated_account({"user_id": 9, "username": "newcomer", "interests": []})
+    assert (agent.content_rec_sys_name, agent.follow_rec_sys_name) == ("ReverseChronoComments", "FollowRecSys")
+    assert (type(agent.kw["recsys"]).__name__, type(agent.kw["frecsys"]).__name__) == ("ReverseChronoComments", "FollowRecSys")
+
+
+def test_a_saved_federation_agent_with_the_default_recommender_name_is_read_back(make_client, monkeypatch, tmp_path):
+    """"default" in the population file made `read_agents` raise on resume: the account takes the majority's recommenders."""
+    import y_client.clients.client_web as module
+
+    seen = []
+
+    class Stub:
+        def __init__(self, **kw):
+            seen.append(kw)
+
+        def set_prompts(self, prompts):
+            pass
+
+    monkeypatch.setattr(module, "Agent", Stub)
+    client = make_client(None)
+
+    def entry(name, rec, frec):
+        return {"name": name, "email": "j@federation.local", "password": "p", "type": "user", "leaning": "neutral",
+                "interests": [[], []], "is_page": 0, "rec_sys": rec, "frec_sys": frec,
+                "oe": None, "co": None, "ex": None, "ag": None, "ne": None}
+
+    agents = [entry("a", "CommonInterests", "FollowRecSys"), entry("b", "CommonInterests", "FollowRecSys"),
+              entry("JohnFord", "default", "default")]
+    (tmp_path / "pop.json").write_text(json.dumps({"agents": agents}))
+    client.base_path = str(tmp_path)
+    client.read_agents()
+    assert [type(k["recsys"]).__name__ for k in seen] == ["CommonInterests"] * 3
+    assert [type(k["frecsys"]).__name__ for k in seen] == ["FollowRecSys"] * 3
+
+
+def test_a_restart_lists_the_accounts_adopted_before(make_client, monkeypatch):
+    client = make_client({"enabled": True, "adopt": True})
+    urls = []
+    monkeypatch.setattr(federation.requests, "get", lambda url, timeout=0: urls.append(url) or SimpleNamespace(json=lambda: {"accounts": []}))
+    federation.adopt_provisioned(client)
+    federation.adopt_provisioned(client, include_adopted=True)
+    assert urls[0].endswith("/federation/provisioned") and urls[1].endswith("/federation/provisioned?all=1")
