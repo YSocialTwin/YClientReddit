@@ -12722,7 +12722,7 @@ class Agent(object):
             return True
         allowed = {
             str(e).strip().lower()
-            for e in (self.emotions or [])
+            for e in (getattr(self, "emotions", None) or [])
             if str(e).strip()
         }
         if not allowed:
@@ -12974,7 +12974,7 @@ class Agent(object):
 
         allowed = {
             str(e).strip().lower()
-            for e in (self.emotions or [])
+            for e in (getattr(self, "emotions", None) or [])
             if str(e).strip()
         }
         if not allowed:
