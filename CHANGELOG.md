@@ -4,6 +4,9 @@ All notable changes to this project are documented here. The format follows [Kee
 
 ## [Unreleased]
 
+### Fixed
+- LLM endpoints with an API key: a hosted https endpoint with a model name containing a colon (e.g. `vendor/model:free`) and no key was taken for Ollama; Ollama endpoints that need a key (hosted ones) now get it as a bearer token.
+
 ### Added
 - Forum share re-enabled on request: `SHARE` stays at 0 unless the client configuration has `share.enabled: true` or the federation is on with `crosspost_mode: agent_action` (default off, documented); the configured likelihood is kept (missing or 0 becomes 0.05); with `agent_action` the `/share` payload carries `crosspost_to` (`federation.share_fields`, no random draw otherwise).
 - Cross-post as an agent action (opt-in, `federation.crosspost_mode: agent_action`): after posting, the agent draws once per platform where it is also active (`GET /federation/destinations`) with `federation.crosspost_propensity`, and sends `crosspost_to` ([{member, text}]) with the post; the text is the model's version (prompts `crosspost_adapt_<platform>`, EN and IT) or, without a model or on a failed reply, the same words cut and shaped for the platform. Default mode unchanged.
