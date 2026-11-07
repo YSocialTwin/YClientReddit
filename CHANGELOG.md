@@ -5,7 +5,7 @@ All notable changes to this project are documented here. The format follows [Kee
 ## [Unreleased]
 
 ### Fixed
-- LLM endpoints with an API key: a hosted https endpoint with a model name containing a colon (e.g. `vendor/model:free`) and no key was taken for Ollama; Ollama endpoints that need a key (hosted ones) now get it as a bearer token.
+- LLM endpoints with an API key: Ollama endpoints that need a key (hosted ones) now get it as a bearer token.
 
 ### Added
 - Forum share re-enabled on request: `SHARE` stays at 0 unless the client configuration has `share.enabled: true` or the federation is on with `crosspost_mode: agent_action` (default off, documented); the configured likelihood is kept (missing or 0 becomes 0.05); with `agent_action` the `/share` payload carries `crosspost_to` (`federation.share_fields`, no random draw otherwise).
