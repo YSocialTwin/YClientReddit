@@ -1,4 +1,5 @@
 from y_client import federation
+from y_client import communities
 from y_client.recsys.ContentRecSys import ContentRecSys
 from y_client.recsys.FollowRecSys import FollowRecSys
 from y_client.news_feeds.client_modals import Websites, Images, Articles, Agent_Custom_Prompt, ImagePosts
@@ -741,6 +742,113 @@ class Agent(object):
             prompt_store.prompt("crosspost_decide", name=self.name, profile=profile, trigger=phrase, text=text,
                                 destinations=dest_lines)
         )
+
+    # ------------------------------------------------------------------ communities (opt-in)
+    def _community_profile(self):
+        me = prompt_store.localize(self)
+        facts = [getattr(me, a, None) for a in ("age", "gender", "nationality", "profession", "leaning", "education_level")]
+        return ", ".join(str(f) for f in facts if f not in (None, ""))
+
+    def _community_ask(self, prompt):
+        """The raw reply of the agent's model to ``prompt``; None without a usable model or when the call fails (an
+        optional action must never stop the post)."""
+        if not self._crosspost_has_model():
+            return None
+        try:
+            asker = AssistantAgent(
+                name="CommunityAdvisor",
+                llm_config=self.llm_config,
+                system_message=(getattr(self, "prompts", {}) or {}).get("handler_instructions_simple", ""),
+                max_consecutive_auto_reply=1,
+            )
+            return asker._generate_reply(prompt)
+        except Exception:  # noqa: BLE001
+            return None
+
+    def _community_list(self):
+        """[{"id", "name"}] of the communities of the forum, [] when the server cannot tell."""
+        try:
+            response = get(f"{self.base_url}/get_topics", headers={"Content-Type": "application/x-www-form-urlencoded"})
+            data = json.loads(response.__dict__["_content"].decode("utf-8"))
+            return [t for t in data if isinstance(t, dict) and t.get("name")]
+        except Exception:  # noqa: BLE001
+            return []
+
+    def _community_found(self, tid, interests):
+        """Found a new community with the probability of the config. Returns ([name], [id]) of the community (new, or the
+        existing one the server answered for the same name) or None when the agent does not found one this time."""
+        if not communities.draw_creation():
+            return None
+        existing = self._community_list()
+        names = [str(t["name"]) for t in existing]
+        limit = communities.max_topics()
+        if limit and len(names) >= limit:
+            return None
+        reply = self._community_ask(
+            prompt_store.prompt(
+                "community_create",
+                name=self.name,
+                profile=self._community_profile(),
+                interests=", ".join(str(i) for i in (getattr(self, "interests", None) or interests or [])[:8]) or "-",
+                existing=", ".join(names) or "-",
+            )
+        )
+        name = communities.parse_name(reply)
+        if not name or name.lower() in {n.lower() for n in names}:
+            return None
+        try:
+            response = post(
+                f"{self.base_url}/create_topic",
+                headers={"Content-Type": "application/x-www-form-urlencoded"},
+                data=json.dumps({"user_id": self.user_id, "name": name, "tid": tid, "max_topics": limit}),
+            )
+            data = json.loads(response.__dict__["_content"].decode("utf-8"))
+        except Exception:  # noqa: BLE001
+            return None
+        if data.get("status") != 200 or data.get("id") is None:
+            return None
+        return [data["name"]], [data["id"]]
+
+    def _community_crosspost(self, post_id, post_text, source_topics, tid):
+        """Cross-post the post just written to the related communities the model names (opt-in, with the probability of
+        the config). Returns the ids of the cross-posts."""
+        if post_id is None or not communities.draw_crosspost():
+            return []
+        sources = {str(t).strip().lower() for t in source_topics}
+        candidates = [t for t in self._community_list() if str(t["name"]).strip().lower() not in sources]
+        if not candidates:
+            return []
+        limit = communities.max_per_post()
+        names = [str(t["name"]) for t in candidates]
+        reply = self._community_ask(
+            prompt_store.prompt(
+                "community_crosspost",
+                name=self.name,
+                source=", ".join(source_topics),
+                text=post_text,
+                candidates="\n".join(f"- {n}" for n in names),
+                limit=limit,
+            )
+        )
+        chosen = communities.parse_choice(reply, names, limit)
+        text = communities.crosspost_text(
+            post_text, prompt_store.prompt("community_crosspost_note", source=", ".join(source_topics))
+        )
+        made = []
+        for name in chosen:
+            topic_id = next(t["id"] for t in candidates if str(t["name"]) == name)
+            try:
+                response = post(
+                    f"{self.base_url}/crosspost_thread",
+                    headers={"Content-Type": "application/x-www-form-urlencoded"},
+                    data=json.dumps({"user_id": self.user_id, "post_id": post_id, "topic_id": topic_id, "text": text, "tid": tid}),
+                )
+                data = json.loads(response.__dict__["_content"].decode("utf-8"))
+            except Exception:  # noqa: BLE001
+                continue
+            if data.get("status") == 200 and data.get("id") is not None:
+                made.append(data["id"])
+        return made
 
     def _crosspost_has_model(self):
         configs = (getattr(self, "llm_config", None) or {}).get("config_list") or []
@@ -7648,6 +7756,11 @@ class Agent(object):
             interests_id = []
             print(f"Warning: No interests found for agent {self.name}. Using empty list.")
 
+        # opt-in: the agent may found a new community and write its first post there
+        founded = self._community_found(tid, interests)
+        if founded:
+            interests, interests_id = founded
+
         # get recent sentiment on the selected interests
         api_url = f"{self.base_url}/get_sentiment"
         data = {"user_id": self.user_id, "interests": interests}
@@ -7924,8 +8037,14 @@ class Agent(object):
         headers = {"Content-Type": "application/x-www-form-urlencoded"}
 
         api_url = f"{self.base_url}/post"
-        post(f"{api_url}", headers=headers, data=st)
+        post_response = post(f"{api_url}", headers=headers, data=st)
         self.__record_post(post_text)
+        if communities.crosspost_enabled():
+            try:
+                new_post_id = json.loads(post_response.__dict__["_content"].decode("utf-8")).get("id")
+                self._community_crosspost(new_post_id, post_text, interests, tid)
+            except Exception:  # noqa: BLE001 - optional: never stops the post
+                pass
 
         # Run-scoped memory: record that we authored a post and refresh community digest periodically.
         try:

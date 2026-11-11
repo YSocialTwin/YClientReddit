@@ -50,5 +50,8 @@
   "crosspost_decide_action_share": "you shared it",
   "crosspost_decide_action_comment": "you commented on it",
   "crosspost_decide_action_reply": "you replied to it",
-  "crosspost_decide_action_reaction": "you reacted to it"
+  "crosspost_decide_action_reaction": "you reacted to it",
+  "community_create": "You are {name}. {profile}\nYou are about to start a new discussion community of your own, like a subreddit.\nYour interests: {interests}.\nCommunities that already exist: {existing}.\nPropose the name of ONE new community about a specific theme related to your interests that the existing communities do not cover. The name must have at most 20 characters, 1 to 3 words, no 'y/' and no '#'. If every theme you can think of is already covered, answer NONE.\nAnswer with the name only.",
+  "community_crosspost": "You are {name}. You have just published this post in the community \"{source}\":\n\"\"\"\n{text}\n\"\"\"\nYou may also post it in other existing communities, but only where it is clearly on topic and their members would find it relevant. For example a post about Linux fits a community about Windows or about open source, but not one about winter sports.\nCommunities you can choose from:\n{candidates}\nAnswer with at most {limit} names from the list, separated by commas, or NONE if no community is a natural fit. Answer with the names only.",
+  "community_crosspost_note": "Cross-posted from y/{source}"
 }

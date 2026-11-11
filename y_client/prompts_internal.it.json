@@ -50,5 +50,8 @@
   "crosspost_decide_action_share": "l'hai condiviso",
   "crosspost_decide_action_comment": "l'hai commentato",
   "crosspost_decide_action_reply": "hai risposto",
-  "crosspost_decide_action_reaction": "hai reagito"
+  "crosspost_decide_action_reaction": "hai reagito",
+  "community_create": "Sei {name}. {profile}\nStai per aprire una nuova comunità di discussione tutta tua, come un subreddit.\nI tuoi interessi: {interests}.\nComunità già esistenti: {existing}.\nProponi il nome di UNA nuova comunità su un tema specifico legato ai tuoi interessi che le comunità esistenti non coprono. Il nome deve avere al massimo 20 caratteri, da 1 a 3 parole, senza 'y/' e senza '#'. Se ogni tema che ti viene in mente è già coperto, rispondi NONE.\nRispondi solo con il nome.",
+  "community_crosspost": "Sei {name}. Hai appena pubblicato questo post nella comunità \"{source}\":\n\"\"\"\n{text}\n\"\"\"\nPuoi pubblicarlo anche in altre comunità esistenti, ma solo dove è chiaramente in tema e i loro membri lo troverebbero rilevante. Per esempio un post su Linux va bene in una comunità su Windows o sull'open source, non in una sugli sport invernali.\nComunità tra cui puoi scegliere:\n{candidates}\nRispondi con al massimo {limit} nomi della lista, separati da virgole, oppure NONE se nessuna comunità è una scelta naturale. Rispondi solo con i nomi.",
+  "community_crosspost_note": "Cross-post da y/{source}"
 }

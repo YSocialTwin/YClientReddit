@@ -187,6 +187,22 @@ Current committed fields:
 
 `visibility_rounds` shapes how long posts remain visible to recommenders and readers. `emotions` is present as a schema-like map of supported labels.
 
+## `communities`
+
+Optional and off by default. In the forum a community is a topic. Two actions let the agents change the set of communities and spread their posts between them:
+
+```json
+"communities": {
+  "creation":  {"enabled": false, "probability": 0.05, "max_topics": 0},
+  "crosspost": {"enabled": false, "probability": 0.15, "max_per_post": 1}
+}
+```
+
+- `creation`: before writing a post an agent founds, with `probability`, a new community. The agent's model proposes a name (at most 20 characters, on a theme related to its interests that the existing communities do not cover) and the server creates it, or answers the existing topic with the same name; the post is then the first of that community, and the founder takes it among its interests. `max_topics` caps the communities of the forum (0 = no cap).
+- `crosspost`: after a post an agent shows it, with `probability`, to its model together with the other communities. The model names the ones where the post is clearly on topic (a post about Linux fits Windows, not winter sports) or NONE; at most `max_per_post` are used. The server adds a cross-post of the thread (a new root of the agent in that community, shown as shared from the original) in each. A community the thread is already in is never offered, and a thread is cross-posted to a community only once per agent.
+
+An agent without a usable model never founds or cross-posts. The prompts are `community_create`, `community_crosspost` and `community_crosspost_note` (English and Italian).
+
 ## Prompt configuration
 
 Prompt templates live in [`config_files/prompts.json`](../config_files/prompts.json).

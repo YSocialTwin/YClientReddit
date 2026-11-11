@@ -17,6 +17,7 @@ base = None
 
 from y_client import prompt_store
 from y_client import federation as _federation
+from y_client import communities as _communities
 from y_client.classes.base_agent import Agent, Agents
 from y_client.classes.fake_base_agent import FakeAgent
 from y_client.classes.time import SimulationSlot
@@ -93,6 +94,7 @@ class YClientWeb(object):
             for a, v in self.config["simulation"]["actions_likelihood"].items()
         }
         _federation.install(self.config)  # only reads the share/federation options here
+        _communities.install(self.config)  # opt-in: found / cross-post communities
         # Forum experiments do not allow repost/share of other users' content, unless the experiment opens it
         # (`share.enabled` or federation with crosspost_mode = agent_action).
         if "SHARE" in self.actions_likelihood:
