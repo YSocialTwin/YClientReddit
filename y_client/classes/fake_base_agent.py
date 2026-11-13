@@ -15,6 +15,7 @@ Classes:
 """
 
 import json
+import numbers
 import hashlib
 import random
 import re
@@ -665,7 +666,7 @@ class FakeAgent(Agent):
             uid, _uname = self.get_username_from_post(post_id)
             target = uid
 
-        if isinstance(target, int):
+        if isinstance(target, numbers.Integral):  # also numpy integers (np.random.choice)
 
             st = json.dumps(
                 {
