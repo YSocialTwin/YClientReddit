@@ -37,8 +37,11 @@ class ContentRecSys(object):
 
         headers = {"Content-Type": "application/x-www-form-urlencoded"}
 
+        # the flag must not stick to the (reusable) instance after an article read
         if articles:
             self.params["articles"] = True
+        else:
+            self.params.pop("articles", None)
 
         self.params["uid"] = user_id
 
@@ -94,7 +97,7 @@ class ReverseChrono(ContentRecSys):
         )
         self.name = "ReverseChrono"
         self.params = {
-            "limit": 10,
+            "limit": n_posts,
             "mode": "rchrono",
             "visibility_rounds": visibility_rounds,
         }
@@ -113,7 +116,7 @@ class ReverseChronoPopularity(ContentRecSys):
         )
         self.name = "ReverseChronoPopularity"
         self.params = {
-            "limit": 10,
+            "limit": n_posts,
             "mode": "rchrono_popularity",
             "visibility_rounds": visibility_rounds,
         }
@@ -133,7 +136,7 @@ class ReverseChronoFollowers(ContentRecSys):
         )
         self.name = "ReverseChronoFollowers"
         self.params = {
-            "limit": 10,
+            "limit": n_posts,
             "followers_ratio": followers_ratio,
             "mode": "rchrono_followers",
             "visibility_rounds": visibility_rounds,
@@ -154,7 +157,7 @@ class ReverseChronoFollowersPopularity(ContentRecSys):
         )
         self.name = "ReverseChronoFollowersPopularity"
         self.params = {
-            "limit": 10,
+            "limit": n_posts,
             "followers_ratio": followers_ratio,
             "mode": "rchrono_followers_popularity",
             "visibility_rounds": visibility_rounds,
@@ -175,13 +178,19 @@ class HotRanking(ContentRecSys):
         """
         Reddit-style hot ranking content recommendation system.
 
-        Uses logarithmic scoring: log10(max(|score|, 1)) + sign(score) * round / round_decay
-        This gives new posts a jumpstart - every round_decay rounds, a post needs ~10x
-        more votes to maintain the same position against newer posts.
+        Uses logarithmic scoring: sign(score) * log10(|score| + 1) + round / round_decay
+        where score = likes - dislikes. Recency is always added (also for posts without
+        votes): every round_decay rounds, a post needs ~10x more votes to keep the same
+        position against newer posts. Posts with few votes get a small deterministic jitter
+        (hot_longtail_j1 / hot_longtail_j2) so that new threads are explored.
 
         :param n_posts: the number of posts to recommend
         :param visibility_rounds: the number of visibility rounds
         :param round_decay: rounds for 10x vote equivalence (default 12)
+        :param hot_vote_thresh1: threads with at most this many votes get the jitter j1
+        :param hot_vote_thresh2: threads with at most this many votes get the jitter j2
+        :param hot_longtail_j1: max jitter for threads with <= hot_vote_thresh1 votes
+        :param hot_longtail_j2: max jitter for threads with <= hot_vote_thresh2 votes
         """
         super(HotRanking, self).__init__(
             n_posts=n_posts, visibility_rounds=visibility_rounds
@@ -239,3 +248,123 @@ class MostCommented(ContentRecSys):
             "mode": "most_commented",
             "visibility_rounds": visibility_rounds,
         }
+
+
+class ReverseChronoComments(ContentRecSys):
+    def __init__(self, n_posts=10, followers_ratio=0.6, visibility_rounds=36):
+        """
+        Most commented threads: threads of the followed accounts fill the follower quota,
+        the remaining slots are the most commented threads of everybody else.
+
+        :param n_posts: the number of posts to recommend
+        :param followers_ratio: the ratio posts from followers to recommend
+        :param visibility_rounds: the number of visibility rounds
+        """
+        super(ReverseChronoComments, self).__init__(
+            n_posts=n_posts, visibility_rounds=visibility_rounds
+        )
+        self.name = "ReverseChronoComments"
+        self.params = {
+            "limit": n_posts,
+            "followers_ratio": followers_ratio,
+            "mode": "rchrono_comments",
+            "visibility_rounds": visibility_rounds,
+        }
+
+
+class CommonInterests(ContentRecSys):
+    def __init__(self, n_posts=10, followers_ratio=0.6, visibility_rounds=36):
+        """
+        Posts about the topics the user is interested in (followed accounts first).
+
+        :param n_posts: the number of posts to recommend
+        :param followers_ratio: the ratio posts from followers to recommend
+        :param visibility_rounds: the number of visibility rounds
+        """
+        super(CommonInterests, self).__init__(
+            n_posts=n_posts, visibility_rounds=visibility_rounds
+        )
+        self.name = "CommonInterests"
+        self.params = {
+            "limit": n_posts,
+            "followers_ratio": followers_ratio,
+            "mode": "common_interests",
+            "visibility_rounds": visibility_rounds,
+        }
+
+
+class CommonUserInterests(ContentRecSys):
+    def __init__(self, n_posts=10, followers_ratio=0.6, visibility_rounds=36):
+        """
+        Posts reacted to by users sharing the topic interests of the user.
+
+        :param n_posts: the number of posts to recommend
+        :param followers_ratio: the ratio posts from followers to recommend
+        :param visibility_rounds: the number of visibility rounds
+        """
+        super(CommonUserInterests, self).__init__(
+            n_posts=n_posts, visibility_rounds=visibility_rounds
+        )
+        self.name = "CommonUserInterests"
+        self.params = {
+            "limit": n_posts,
+            "followers_ratio": followers_ratio,
+            "mode": "common_user_interests",
+            "visibility_rounds": visibility_rounds,
+        }
+
+
+class SimilarUsersReactions(ContentRecSys):
+    def __init__(self, n_posts=10, visibility_rounds=36):
+        """
+        Posts liked by users similar to the user (leaning, language, personality, age...).
+
+        :param n_posts: the number of posts to recommend
+        :param visibility_rounds: the number of visibility rounds
+        """
+        super(SimilarUsersReactions, self).__init__(
+            n_posts=n_posts, visibility_rounds=visibility_rounds
+        )
+        self.name = "SimilarUsersReactions"
+        self.params = {
+            "limit": n_posts,
+            "mode": "similar_users_react",
+            "visibility_rounds": visibility_rounds,
+        }
+
+
+class SimilarUsersPosts(ContentRecSys):
+    def __init__(self, n_posts=10, visibility_rounds=36):
+        """
+        Posts written by users similar to the user (leaning, language, personality, age...).
+
+        :param n_posts: the number of posts to recommend
+        :param visibility_rounds: the number of visibility rounds
+        """
+        super(SimilarUsersPosts, self).__init__(
+            n_posts=n_posts, visibility_rounds=visibility_rounds
+        )
+        self.name = "SimilarUsersPosts"
+        self.params = {
+            "limit": n_posts,
+            "mode": "similar_users_posts",
+            "visibility_rounds": visibility_rounds,
+        }
+
+
+# names accepted as content recommender (CLI ``-x`` and the ``rec_sys`` field of the agents)
+CONTENT_RECSYS = [
+    "ContentRecSys",
+    "ReverseChrono",
+    "ReverseChronoPopularity",
+    "ReverseChronoFollowers",
+    "ReverseChronoFollowersPopularity",
+    "ReverseChronoComments",
+    "CommonInterests",
+    "CommonUserInterests",
+    "SimilarUsersReactions",
+    "SimilarUsersPosts",
+    "HotRanking",
+    "TopRanking",
+    "MostCommented",
+]

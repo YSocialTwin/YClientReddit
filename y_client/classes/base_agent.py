@@ -1,3 +1,5 @@
+from y_client import federation
+from y_client import communities
 from y_client.recsys.ContentRecSys import ContentRecSys
 from y_client.recsys.FollowRecSys import FollowRecSys
 from y_client.news_feeds.client_modals import Websites, Images, Articles, Agent_Custom_Prompt, ImagePosts
@@ -10,6 +12,7 @@ from y_client.memory_runtime import build_agent_memory_engine
 from y_client.stress_reward.update_system import StressRewardSystem, deep_update
 import y_client.opinion_dynamics as op_dynamics
 from y_client import content_store
+import copy
 import random
 from requests import get, post
 import json
@@ -200,6 +203,12 @@ def _normalize_output_tokens(raw_value):
 
 
 class Agent(object):
+    # Defaults for the follow probabilities that only the web initialiser sets from the config:
+    # agents built through the plain client path (rule-based FakeAgent included) read them too.
+    probability_of_daily_follow = 0.0
+    probability_of_secondary_follow = 0.0
+    probability_of_follow_back = 0.0
+
     def __init__(
         self,
         name: str,
@@ -677,6 +686,174 @@ class Agent(object):
             return data if isinstance(data, dict) else {}
         except Exception:
             return {}
+
+    def _crosspost_adapt(self, dest, text):
+        """The agent's own version of its post for the destination platform (cross-post as an agent action, F6.2).
+
+        None when it cannot be done (no usable model, no prompt for that platform, an error or an empty reply): the
+        caller then uses the rule text."""
+        key = federation.adapt_prompt_key(dest)
+        configs = (getattr(self, "llm_config", None) or {}).get("config_list") or []
+        model = str((configs[0] or {}).get("model") or "").strip().lower() if configs else ""
+        if key is None or model in ("", "none", "null"):
+            return None
+        try:
+            adapter = AssistantAgent(
+                name="CrosspostAdapter",
+                llm_config=self.llm_config,
+                system_message=(getattr(self, "prompts", {}) or {}).get("handler_instructions_simple", ""),
+                max_consecutive_auto_reply=1,
+            )
+            reply = adapter._generate_reply(
+                prompt_store.prompt(key, source_platform=federation.source_platform(), text=text)
+            )
+        except Exception:  # noqa: BLE001 - a failing model must not stop the post
+            return None
+        return federation.parse_reply(dest, reply)
+
+    def _crosspost_decider(self):
+        """The function that asks this agent's model whether to cross-post (crosspost.decision = llm), or None for an
+        agent without a usable model (it keeps the Bernoulli draw)."""
+        return self._crosspost_decide if self._crosspost_has_model() else None
+
+    def _crosspost_decide(self, trigger, text, dest_lines, context=None):
+        """The raw reply of the agent's model to the prompt `crosspost_decide` (the answer is a JSON object that
+        `federation.parse_decision` reads). `trigger` is `publish` or `interaction`; for an interaction `context` is
+        {"action": "share"|"comment"|"reply"|"reaction", "content": text of the content of the other agent}.
+        One model call; errors propagate (the caller falls back to the draw)."""
+        me = prompt_store.localize(self)
+        facts = [getattr(me, a, None) for a in ("age", "gender", "nationality", "profession", "leaning", "education_level")]
+        interests = [str(i) for i in (getattr(me, "interests", None) or [])][:6]
+        profile = ", ".join(str(f) for f in facts if f not in (None, "")) + (f"; {', '.join(interests)}" if interests else "")
+        context = context or {}
+        if trigger == "interaction":
+            action = prompt_store.get("crosspost_decide_action_" + str(context.get("action") or "share"))
+            phrase = prompt_store.prompt("crosspost_decide_interaction", action=action)
+            text = context.get("content") or text
+        else:
+            phrase = prompt_store.get("crosspost_decide_publish")
+        decider = AssistantAgent(
+            name="CrosspostDecider",
+            llm_config=self.llm_config,
+            system_message=(getattr(self, "prompts", {}) or {}).get("handler_instructions_simple", ""),
+            max_consecutive_auto_reply=1,
+        )
+        return decider._generate_reply(
+            prompt_store.prompt("crosspost_decide", name=self.name, profile=profile, trigger=phrase, text=text,
+                                destinations=dest_lines)
+        )
+
+    # ------------------------------------------------------------------ communities (opt-in)
+    def _community_profile(self):
+        me = prompt_store.localize(self)
+        facts = [getattr(me, a, None) for a in ("age", "gender", "nationality", "profession", "leaning", "education_level")]
+        return ", ".join(str(f) for f in facts if f not in (None, ""))
+
+    def _community_ask(self, prompt):
+        """The raw reply of the agent's model to ``prompt``; None without a usable model or when the call fails (an
+        optional action must never stop the post)."""
+        if not self._crosspost_has_model():
+            return None
+        try:
+            asker = AssistantAgent(
+                name="CommunityAdvisor",
+                llm_config=self.llm_config,
+                system_message=(getattr(self, "prompts", {}) or {}).get("handler_instructions_simple", ""),
+                max_consecutive_auto_reply=1,
+            )
+            return asker._generate_reply(prompt)
+        except Exception:  # noqa: BLE001
+            return None
+
+    def _community_list(self):
+        """[{"id", "name"}] of the communities of the forum, [] when the server cannot tell."""
+        try:
+            response = get(f"{self.base_url}/get_topics", headers={"Content-Type": "application/x-www-form-urlencoded"})
+            data = json.loads(response.__dict__["_content"].decode("utf-8"))
+            return [t for t in data if isinstance(t, dict) and t.get("name")]
+        except Exception:  # noqa: BLE001
+            return []
+
+    def _community_found(self, tid, interests):
+        """Found a new community with the probability of the config. Returns ([name], [id]) of the community (new, or the
+        existing one the server answered for the same name) or None when the agent does not found one this time."""
+        if not communities.draw_creation():
+            return None
+        existing = self._community_list()
+        names = [str(t["name"]) for t in existing]
+        limit = communities.max_topics()
+        if limit and len(names) >= limit:
+            return None
+        reply = self._community_ask(
+            prompt_store.prompt(
+                "community_create",
+                name=self.name,
+                profile=self._community_profile(),
+                interests=", ".join(str(i) for i in (getattr(self, "interests", None) or interests or [])[:8]) or "-",
+                existing=", ".join(names) or "-",
+            )
+        )
+        name = communities.parse_name(reply)
+        if not name or name.lower() in {n.lower() for n in names}:
+            return None
+        try:
+            response = post(
+                f"{self.base_url}/create_topic",
+                headers={"Content-Type": "application/x-www-form-urlencoded"},
+                data=json.dumps({"user_id": self.user_id, "name": name, "tid": tid, "max_topics": limit}),
+            )
+            data = json.loads(response.__dict__["_content"].decode("utf-8"))
+        except Exception:  # noqa: BLE001
+            return None
+        if data.get("status") != 200 or data.get("id") is None:
+            return None
+        return [data["name"]], [data["id"]]
+
+    def _community_crosspost(self, post_id, post_text, source_topics, tid):
+        """Cross-post the post just written to the related communities the model names (opt-in, with the probability of
+        the config). Returns the ids of the cross-posts."""
+        if post_id is None or not communities.draw_crosspost():
+            return []
+        sources = {str(t).strip().lower() for t in source_topics}
+        candidates = [t for t in self._community_list() if str(t["name"]).strip().lower() not in sources]
+        if not candidates:
+            return []
+        limit = communities.max_per_post()
+        names = [str(t["name"]) for t in candidates]
+        reply = self._community_ask(
+            prompt_store.prompt(
+                "community_crosspost",
+                name=self.name,
+                source=", ".join(source_topics),
+                text=post_text,
+                candidates="\n".join(f"- {n}" for n in names),
+                limit=limit,
+            )
+        )
+        chosen = communities.parse_choice(reply, names, limit)
+        text = communities.crosspost_text(
+            post_text, prompt_store.prompt("community_crosspost_note", source=", ".join(source_topics))
+        )
+        made = []
+        for name in chosen:
+            topic_id = next(t["id"] for t in candidates if str(t["name"]) == name)
+            try:
+                response = post(
+                    f"{self.base_url}/crosspost_thread",
+                    headers={"Content-Type": "application/x-www-form-urlencoded"},
+                    data=json.dumps({"user_id": self.user_id, "post_id": post_id, "topic_id": topic_id, "text": text, "tid": tid}),
+                )
+                data = json.loads(response.__dict__["_content"].decode("utf-8"))
+            except Exception:  # noqa: BLE001
+                continue
+            if data.get("status") == 200 and data.get("id") is not None:
+                made.append(data["id"])
+        return made
+
+    def _crosspost_has_model(self):
+        configs = (getattr(self, "llm_config", None) or {}).get("config_list") or []
+        model = str((configs[0] or {}).get("model") or "").strip().lower() if configs else ""
+        return model not in ("", "none", "null")
 
     def _annotate_stress_reward_text(self, prompt_key, text, *, target_user_id=None):
         if not getattr(self, "stress_reward_enabled", False):
@@ -7372,8 +7549,10 @@ class Agent(object):
         :param content_recsys: the content recommendation system
         :param follow_recsys: the follow recommendation system
         """
+        # every agent gets its own copy: the recsys keeps per-user request parameters and the
+        # same instance is passed to all the agents by the experiment
         if self.content_rec_sys is None:
-            self.content_rec_sys = content_recsys
+            self.content_rec_sys = copy.deepcopy(content_recsys)
             self.content_rec_sys.add_user_id(self.user_id)
             self.content_rec_sys_name = content_recsys.name
 
@@ -7389,7 +7568,7 @@ class Agent(object):
             post(f"{api_url}", headers=headers, data=st)
 
         if self.follow_rec_sys is None:
-            self.follow_rec_sys = follow_recsys
+            self.follow_rec_sys = copy.deepcopy(follow_recsys)
             self.follow_rec_sys.add_user_id(self.user_id)
             self.follow_rec_sys_name = follow_recsys.name
 
@@ -7576,6 +7755,11 @@ class Agent(object):
             interests = []
             interests_id = []
             print(f"Warning: No interests found for agent {self.name}. Using empty list.")
+
+        # opt-in: the agent may found a new community and write its first post there
+        founded = self._community_found(tid, interests)
+        if founded:
+            interests, interests_id = founded
 
         # get recent sentiment on the selected interests
         api_url = f"{self.base_url}/get_sentiment"
@@ -7842,7 +8026,8 @@ class Agent(object):
                 "hashtags": hashtags,
                 "mentions": mentions,
                 "tid": tid,
-                "topics": interests_id
+                "topics": interests_id,
+                **federation.post_fields(self.user_id, post_text, self._crosspost_adapt, self._crosspost_decider(), tid),
             }
         )
 
@@ -7852,8 +8037,14 @@ class Agent(object):
         headers = {"Content-Type": "application/x-www-form-urlencoded"}
 
         api_url = f"{self.base_url}/post"
-        post(f"{api_url}", headers=headers, data=st)
+        post_response = post(f"{api_url}", headers=headers, data=st)
         self.__record_post(post_text)
+        if communities.crosspost_enabled():
+            try:
+                new_post_id = json.loads(post_response.__dict__["_content"].decode("utf-8")).get("id")
+                self._community_crosspost(new_post_id, post_text, interests, tid)
+            except Exception:  # noqa: BLE001 - optional: never stops the post
+                pass
 
         # Run-scoped memory: record that we authored a post and refresh community digest periodically.
         try:
@@ -10693,11 +10884,12 @@ class Agent(object):
         :param tid: the round id
         :return: the response from the service
         """
-        logging.info(
-            "Agent %s: SHARE action skipped (disabled for forum experiments).",
-            self.name,
-        )
-        return
+        if not federation.share_allowed():
+            logging.info(
+                "Agent %s: SHARE action skipped (disabled for forum experiments).",
+                self.name,
+            )
+            return
 
         article = self.__get_article(post_id)
         if "status" in article:
@@ -10812,6 +11004,8 @@ class Agent(object):
                 "hashtags": hashtags,
                 "mentions": mentions,
                 "tid": tid,
+                **federation.share_fields(self.user_id, post_text, self._crosspost_adapt, self._crosspost_decider(), tid,
+                                         {"action": "share", "content": f"{article_title}\n{article_summary}".strip()}),
             }
         )
 
@@ -11456,7 +11650,8 @@ class Agent(object):
         :param max_length_thread_reading: The maximum length of the thread to read.
         """
         # Forum experiments do not allow repost/share of other users' content.
-        actions = [a for a in actions if str(a).upper() != "SHARE"]
+        if not federation.share_allowed():
+            actions = [a for a in actions if str(a).upper() != "SHARE"]
         if not actions:
             actions = ["NONE"]
 
@@ -11604,10 +11799,16 @@ class Agent(object):
                 )
 
         elif protocol_tokens.has_token(text, protocol_tokens.SHARE):
-            logging.info(
-                "Agent %s: LLM selected SHARE, but share is disabled; skipping.",
-                self.name,
-            )
+            if not federation.share_allowed():
+                logging.info(
+                    "Agent %s: LLM selected SHARE, but share is disabled; skipping.",
+                    self.name,
+                )
+            else:
+                candidates = json.loads(self.read(article=True))
+                if len(candidates) > 0:
+                    selected_post = random.sample(candidates, 1)
+                    self.share(int(selected_post[0]), tid=tid)
 
         elif protocol_tokens.has_token(text, protocol_tokens.CAST):
             candidates = json.loads(self.read())
@@ -12640,7 +12841,7 @@ class Agent(object):
             return True
         allowed = {
             str(e).strip().lower()
-            for e in (self.emotions or [])
+            for e in (getattr(self, "emotions", None) or [])
             if str(e).strip()
         }
         if not allowed:
@@ -12892,7 +13093,7 @@ class Agent(object):
 
         allowed = {
             str(e).strip().lower()
-            for e in (self.emotions or [])
+            for e in (getattr(self, "emotions", None) or [])
             if str(e).strip()
         }
         if not allowed:

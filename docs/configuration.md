@@ -50,7 +50,7 @@ Key fields:
 
 ### `actions_likelihood`
 
-This governs the action mix the agents choose from. In forum mode, `SHARE` is normalized to `0.0` inside the clients.
+This governs the action mix the agents choose from. In forum mode, `SHARE` is normalized to `0.0` inside the clients unless the share is opened: with `"share": {"enabled": true}` in the client configuration, or with the federation enabled and `federation.crosspost_mode: agent_action`. When opened, the configured `share` likelihood is used (a missing or zero value becomes the default `0.05`). The agent shares a thread that carries a news article; with `agent_action` the share is also sent to the platforms the agent chooses (`crosspost_to`), and the shared text travels with the attribution of the original author.
 
 Current example keys:
 
@@ -186,6 +186,22 @@ Current committed fields:
 - `emotions`
 
 `visibility_rounds` shapes how long posts remain visible to recommenders and readers. `emotions` is present as a schema-like map of supported labels.
+
+## `communities`
+
+Optional and off by default. In the forum a community is a topic. Two actions let the agents change the set of communities and spread their posts between them:
+
+```json
+"communities": {
+  "creation":  {"enabled": false, "probability": 0.05, "max_topics": 0},
+  "crosspost": {"enabled": false, "probability": 0.15, "max_per_post": 1}
+}
+```
+
+- `creation`: before writing a post an agent founds, with `probability`, a new community. The agent's model proposes a name (at most 20 characters, on a theme related to its interests that the existing communities do not cover) and the server creates it, or answers the existing topic with the same name; the post is then the first of that community, and the founder takes it among its interests. `max_topics` caps the communities of the forum (0 = no cap).
+- `crosspost`: after a post an agent shows it, with `probability`, to its model together with the other communities. The model names the ones where the post is clearly on topic (a post about Linux fits Windows, not winter sports) or NONE; at most `max_per_post` are used. The server adds a cross-post of the thread (a new root of the agent in that community, shown as shared from the original) in each. A community the thread is already in is never offered, and a thread is cross-posted to a community only once per agent.
+
+An agent without a usable model never founds or cross-posts. The prompts are `community_create`, `community_crosspost` and `community_crosspost_note` (English and Italian).
 
 ## Prompt configuration
 

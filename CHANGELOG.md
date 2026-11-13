@@ -4,6 +4,25 @@ All notable changes to this project are documented here. The format follows [Kee
 
 ## [Unreleased]
 
+### Fixed
+- LLM endpoints with an API key: Ollama endpoints that need a key (hosted ones) now get it as a bearer token.
+
+### Added
+- Communities (opt-in, `communities` section): agents can found a new community (a topic) before a post, and cross-post a post to the related communities their model names (`/create_topic`, `/crosspost_thread` of the server). Off by default; prompts `community_create`, `community_crosspost`, `community_crosspost_note` (EN, IT).
+- Forum share re-enabled on request: `SHARE` stays at 0 unless the client configuration has `share.enabled: true` or the federation is on with `crosspost_mode: agent_action` (default off, documented); the configured likelihood is kept (missing or 0 becomes 0.05); with `agent_action` the `/share` payload carries `crosspost_to` (`federation.share_fields`, no random draw otherwise).
+- Cross-post as an agent action (opt-in, `federation.crosspost_mode: agent_action`): after posting, the agent draws once per platform where it is also active (`GET /federation/destinations`) with `federation.crosspost_propensity`, and sends `crosspost_to` ([{member, text}]) with the post; the text is the model's version (prompts `crosspost_adapt_<platform>`, EN and IT) or, without a model or on a failed reply, the same words cut and shaped for the platform. Default mode unchanged.
+- Federation attention (opt-in): the agent's number of actions in a slot is scaled by the multiplier of the day that the server publishes (`GET /federation/attention`), rounded at random with the module's own generator; with the federation off or multiplier 1 nothing changes.
+- Federation (opt-in, `y_client/federation.py`): with the `federation` section of the client configuration enabled, agents that are not active on the platform (listed by `GET /federation/inactive_users`) are not sampled and do not act, and an agent may mark a post for cross-post (`federation.crosspost_propensity`, own seeded generator, extra `crosspost` field of `/post`). Without the section nothing changes.
+- Content recommenders `ReverseChronoComments`, `CommonInterests`, `CommonUserInterests`, `SimilarUsersReactions` and `SimilarUsersPosts`, so every recommender offered by YWeb for forum clients exists in the client (before, selecting them made the agents fail to load).
+- `y_client.recsys.CONTENT_RECSYS` lists the available content recommenders; the CLI `-x` option validates against it and shows them in its help.
+- Tests for the content recommenders (`tests/test_content_recsys.py`).
+
+### Fixed
+- `ReverseChrono`, `ReverseChronoPopularity`, `ReverseChronoFollowers` and `ReverseChronoFollowersPopularity` ignored `n_posts` (the limit was fixed to 10).
+- The `articles` flag no longer stays set on the recommender after an article read.
+- Every agent gets its own copy of the recommenders (the instance was shared and its `uid` overwritten at each read).
+- `HotRanking` docstring and docs describe the actual formula; documented `MostCommented` and the available modes.
+
 ## [2.1.1] - 2026-10-22
 
 ### Fixed

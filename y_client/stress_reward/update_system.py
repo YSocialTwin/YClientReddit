@@ -56,10 +56,10 @@ class StressRewardSystem:
         },
         "churn": {
             "enabled": False,
-            "stress_weight": 1.5,
+            "stress_weight": 2.0,
             "reward_weight": 1.0,
-            "bias": -2.2,
-            "temperature": 0.35,
+            "bias": -1.8,
+            "temperature": 0.3,
             "min_probability": 0.0,
             "max_probability": 0.95,
         },
@@ -281,11 +281,11 @@ class StressRewardSystem:
         churn_cfg = self.config.get("churn") or {}
         stress = self._clamp01(current_stress)
         reward = self._clamp01(current_reward)
-        temperature = max(1e-6, float(churn_cfg.get("temperature", 0.35)))
+        temperature = max(1e-6, float(churn_cfg.get("temperature", 0.3)))
         logits = (
-            float(churn_cfg.get("stress_weight", 1.5)) * stress
+            float(churn_cfg.get("stress_weight", 2.0)) * stress
             - float(churn_cfg.get("reward_weight", 1.0)) * reward
-            + float(churn_cfg.get("bias", -2.2))
+            + float(churn_cfg.get("bias", -1.8))
         )
         probability = 1.0 / (1.0 + exp(-(logits / temperature)))
         probability = max(float(churn_cfg.get("min_probability", 0.0)), probability)

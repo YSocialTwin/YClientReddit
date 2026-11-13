@@ -5,6 +5,7 @@ if __name__ == "__main__":
     sys.path.append(os.path.dirname(SCRIPT_DIR))
 
     from argparse import ArgumentParser
+    from y_client.recsys import CONTENT_RECSYS
 
     parser = ArgumentParser()
 
@@ -48,7 +49,9 @@ if __name__ == "__main__":
         "-x",
         "--crecsys",
         default="ReverseChronoFollowersPopularity",
-        help="Name of the content recsys to be used. Options: ...",
+        choices=CONTENT_RECSYS,
+        help="Name of the content recsys to be used. Options: "
+        + ", ".join(CONTENT_RECSYS),
     )
     parser.add_argument(
         "-y",

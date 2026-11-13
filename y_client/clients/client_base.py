@@ -18,6 +18,8 @@ from y_client.recsys import *
 from y_client.utils import generate_user
 from y_client.news_feeds import Feeds
 from y_client.content_store import initialize_content_store, reset_content_db
+from y_client import federation as _federation
+from y_client import communities as _communities
 
 admin_session = None
 admin_engine = None
@@ -48,6 +50,8 @@ class YClientBase(object):
 
         self.prompts = self._load_prompts_with_defaults(prompts_filename)
         self.config = json.load(open(config_filename, "r"))
+        _federation.install(self.config)  # no-op unless the "federation" section is enabled
+        _communities.install(self.config)  # opt-in: found / cross-post communities
         initialize_content_store(experiment_name=self.config["simulation"]["name"])
         self.agents_owner = owner
         self.agents_filename = agents_filename
@@ -68,9 +72,10 @@ class YClientBase(object):
             a.upper(): float(v)
             for a, v in self.config["simulation"]["actions_likelihood"].items()
         }
-        # Forum experiments do not allow repost/share of other users' content.
+        # Forum experiments do not allow repost/share of other users' content, unless the experiment opens it
+        # (`share.enabled` or federation with crosspost_mode = agent_action).
         if "SHARE" in self.actions_likelihood:
-            self.actions_likelihood["SHARE"] = 0.0
+            self.actions_likelihood["SHARE"] = _federation.share_likelihood(self.actions_likelihood["SHARE"])
         tot = sum(self.actions_likelihood.values())
         if tot <= 0:
             self.actions_likelihood = {"NONE": 1.0}
@@ -463,6 +468,32 @@ class YClientBase(object):
             self.agents.add_agent(agent)
             self.assign_agent_interests(agent)
 
+    def adopt_federated_account(self, account):
+        """Give an agent to an account the server created for the federation (INV-19): the agent is loaded from the server
+        by its name, like a resumed one, so nothing is registered twice (its interests were stored by the server). Returns
+        the agent, or None when it cannot be built."""
+        uid = int(account["user_id"])
+        for ag in self.agents.agents:
+            if getattr(ag, "user_id", None) == uid:
+                return ag
+        try:
+            from y_client.classes.fake_base_agent import FakeAgent
+            from y_client.utils import _rule_based_agents_enabled
+
+            # the class every other agent of the experiment has (generate_user): a rule-based experiment has no model
+            agent = (FakeAgent if _rule_based_agents_enabled(self.config) else Agent)(
+                name=account["username"], email=f"{account['username']}@federation.local", load=True, config=self.config)
+            if getattr(agent, "user_id", None) is None:
+                return None
+            agent.set_prompts(self.prompts)
+            agent.set_rec_sys(self.content_recsys, self.follow_recsys)
+        except Exception as exc:  # noqa: BLE001 - the account stays unadopted and is offered again
+            print(f"federation: could not adopt {account.get('username')}: {exc}")
+            return None
+        agent.simulation_client = self
+        self.agents.add_agent(agent)
+        return agent
+
     def process_reciprocal_follow_event(
         self, *, actor_agent, target_user_id: int, action: str, tid: int
     ) -> bool:
@@ -590,7 +621,9 @@ class YClientBase(object):
                         int(len(self.agents.agents) * self.hourly_activity[str(h)]), 1
                     )
 
-                    sagents = random.sample(self.agents.agents, min(expected_active_users, len(self.agents.agents)))
+                    _federation.adopt_provisioned(self)  # agents for the accounts the federation created here (INV-19)
+                    pool = _federation.filter_pool(self.agents.agents)  # same list unless the federation hides accounts
+                    sagents = random.sample(pool, min(expected_active_users, len(pool)))
 
                     # available actions
                     acts = [a for a, v in self.actions_likelihood.items() if v > 0]
@@ -642,6 +675,7 @@ class YClientBase(object):
                         effective_round_actions = max(
                             1, int(round(float(g.round_actions) * action_multiplier))
                         )
+                        effective_round_actions = _federation.scale_actions(effective_round_actions, g.user_id)  # federation attention (F4.3)
 
                         for _ in range(effective_round_actions):
                             self.sim_clock.maybe_heartbeat()
